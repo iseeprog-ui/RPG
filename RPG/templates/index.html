@@ -38,9 +38,10 @@
       <div class="top-bar-meta">
         <div id="meta-info"></div>
         <div class="meta-buttons">
-          <button id="save-btn" class="meta-btn">Сохранить</button>
-          <button id="load-btn" class="meta-btn">Загрузить</button>
-          <button id="skillTreeBtn" class="meta-btn">Древо</button>
+          <button id="save-btn" class="meta-btn" title="Ctrl+S">Сохранить</button>
+          <button id="load-btn" class="meta-btn" title="Ctrl+L">Загрузить</button>
+          <button id="new-character" class="meta-btn" title="Shift+N">Новый персонаж</button>
+          <button id="skillTreeBtn" class="meta-btn" title="K">Древо</button>
         </div>
       </div>
     </div>
@@ -168,6 +169,6 @@
     <div id="tooltip"></div>
   </div>
 
-  <script src="{{ url_for('static', filename='main.js') }}"></script>
+  <script type="module" src="{{ url_for('static', filename='js/main.js') }}"></script>
 </body>
 </html>
