@@ -24,7 +24,12 @@ function ensureAnimationState(player) {
   }
   if (!player.animation) {
     const idle = player.animations?.idle;
-    player.animation = { name: 'idle', animator: idle || null };
+    player.animation = {
+      name: 'idle',
+      frame: 0,
+      timer: 0,
+      animator: idle || null
+    };
     if (player.animation.animator) player.animation.animator.reset();
   }
   if (!player.weaponAnimations) {
@@ -44,7 +49,12 @@ function setPlayerAnimation(player, name, { force = false } = {}) {
   if (!force && player.animation?.name === name) return;
   const animator = player.animations[name];
   animator.reset();
-  player.animation = { name, animator };
+  player.animation = {
+    name,
+    frame: 0,
+    timer: 0,
+    animator
+  };
 }
 
 function triggerWeaponFx(player, variant) {
@@ -120,7 +130,7 @@ export function createPlayer(classId, race = 'human') {
     velocity: { x: 0, y: 0 },
     facing: 0,
     state: 'idle',
-    animation: { name: 'idle', frame: 0, timer: 0 },
+    animation: null,
     inventory: [],
     equipment: { weapon: null, armor: null, ring: null, amulet: null },
     talents: new Set(),
@@ -128,9 +138,9 @@ export function createPlayer(classId, race = 'human') {
     specialization: CLASS_BRANCHES[classId]?.[0]?.id || null,
     animations: null,
     weaponAnimations: null,
-    animation: null,
     effects: { aura: null, weapon: null },
-    cooldownMessage: 0
+    cooldownMessage: 0,
+    specialEffects: {}
   };
   if (player.specialization) {
     player.branches[player.specialization] = [];
@@ -190,6 +200,8 @@ export function updatePlayer(dt, callbacks) {
     const skill = createSkillPayload(player);
     if (skill) {
       player.derived.skillCooldown = skill.cooldown;
+      player.state = 'cast';
+      setPlayerAnimation(player, 'cast', { force: true });
       if (callbacks?.onSkill) callbacks.onSkill(skill);
     }
   } else if (gameState.input.mouse.right && player.derived.skillCooldown > 0) {
@@ -210,7 +222,7 @@ function advanceAnimation(player, dt) {
   const currentName = player.animation?.name || 'idle';
   if (player.state === 'dead') {
     setPlayerAnimation(player, 'death', { force: currentName !== 'death' });
-  } else if (currentName === 'attack' || currentName === 'hit') {
+  } else if (currentName === 'attack' || currentName === 'hit' || currentName === 'cast') {
     // keep playing until finished
   } else {
     setPlayerAnimation(player, player.state || 'idle');
@@ -219,29 +231,38 @@ function advanceAnimation(player, dt) {
   if (!animator) return;
   animator.update(dt);
   player.animation.frame = animator.frame;
+  player.animation.timer = (player.animation.timer || 0) + dt;
   if (!animator.loop && animator.finished) {
     if (player.animation.name === 'attack') {
       player.state = player.state === 'dead' ? 'dead' : 'idle';
       setPlayerAnimation(player, player.state === 'dead' ? 'death' : 'idle', { force: true });
     } else if (player.animation.name === 'hit') {
       setPlayerAnimation(player, player.state === 'dead' ? 'death' : player.state || 'idle', { force: true });
+      if (player.state !== 'dead') player.state = 'idle';
+    } else if (player.animation.name === 'cast') {
+      player.state = 'idle';
+      setPlayerAnimation(player, 'idle', { force: true });
     }
   }
 }
 
 function createAttackPayload(player) {
   const cls = PLAYER_CLASSES[player.classId];
+  const effects = player.specialEffects || {};
+  const baseDamage = player.stats.damage * (1 + (effects.damageMult || 0));
+  const arcBonus = effects.arcBonus || 0;
+  const dashBonus = effects.dashDistance || 0;
   const payload = {
     type: cls.attack.type,
     origin: { ...player.position },
     facing: player.facing,
     stats: {
-      damage: player.stats.damage,
-      range: cls.attack.range || player.stats.range,
+      damage: baseDamage,
+      range: (cls.attack.range || player.stats.range),
       projectileSpeed: cls.attack.projectileSpeed || 0,
-      arc: cls.attack.arc || 0,
+      arc: (cls.attack.arc || 0) + arcBonus,
       radius: cls.attack.radius || 0,
-      dash: cls.attack.dash || 0,
+      dash: (cls.attack.dash || 0) + dashBonus,
       crit: player.stats.crit,
       lifesteal: player.stats.lifesteal
     },
@@ -252,6 +273,7 @@ function createAttackPayload(player) {
 
 function createSkillPayload(player) {
   const cls = PLAYER_CLASSES[player.classId];
+  const effects = player.specialEffects || {};
   switch (cls.skill) {
     case 'multiShot':
       if (player.stats.mp < 20) {
@@ -259,13 +281,15 @@ function createSkillPayload(player) {
         return null;
       }
       player.stats.mp -= 20;
+      const extra = Math.max(0, Math.floor(effects.extraProjectiles || 0));
       return {
         id: 'multiShot',
         owner: player,
         origin: { ...player.position },
         facing: player.facing,
-        projectiles: 5,
-        spread: 18,
+        projectiles: 5 + extra,
+        spread: 18 + (effects.projectileSpread || 0),
+        projectileDamage: player.stats.damage * 0.9 * (1 + (effects.damageMult || 0)),
         cooldown: 5000
       };
     case 'fireball':
@@ -274,13 +298,15 @@ function createSkillPayload(player) {
         return null;
       }
       player.stats.mp -= 28;
+      const radius = 60 + (effects.fireballRadius || 0);
+      const fireMult = 1 + (effects.fireDamage || 0);
       return {
         id: 'fireball',
         owner: player,
         origin: { ...player.position },
         facing: player.facing,
-        radius: 60,
-        damage: player.stats.damage * 1.4,
+        radius,
+        damage: player.stats.damage * 1.4 * fireMult,
         cooldown: 6000
       };
     case 'powerStrike':
@@ -294,8 +320,8 @@ function createSkillPayload(player) {
         owner: player,
         origin: { ...player.position },
         facing: player.facing,
-        arc: 120,
-        damage: player.stats.damage * 1.5,
+        arc: 120 + (effects.arcBonus || 0),
+        damage: player.stats.damage * 1.5 * (1 + (effects.damageMult || 0)),
         cooldown: 5500
       };
     case 'rage':
@@ -304,10 +330,11 @@ function createSkillPayload(player) {
         return null;
       }
       player.stats.mp -= 18;
+      const bonusDuration = (effects.rageDuration || 0) * 1000;
       return {
         id: 'rage',
         owner: player,
-        duration: 4500,
+        duration: 4500 + bonusDuration,
         damageMult: 1.4,
         speedMult: 1.25,
         cooldown: 7000
@@ -321,8 +348,8 @@ function createSkillPayload(player) {
       return {
         id: 'shadowStep',
         owner: player,
-        dash: 180,
-        damage: player.stats.damage * 1.3,
+        dash: 180 + (effects.dashDistance || 0),
+        damage: player.stats.damage * 1.3 * (1 + (effects.damageMult || 0)),
         cooldown: 5200
       };
     default:
@@ -333,7 +360,15 @@ function createSkillPayload(player) {
 export function applyDamage(amount, source) {
   const player = gameState.player;
   if (!player || player.derived.invul > 0) return;
-  player.stats.hp -= amount;
+  const effects = player.specialEffects || {};
+  let incoming = amount;
+  if (effects.block) {
+    incoming *= Math.max(0.25, 1 - Math.min(0.85, effects.block));
+  }
+  if (player.stats.armor) {
+    incoming *= Math.max(0.25, 1 - Math.min(0.6, player.stats.armor / 120));
+  }
+  player.stats.hp -= incoming;
   player.derived.invul = 350;
   gameState.camera.shake = Math.max(gameState.camera.shake, WORLD.hitShake);
   gameState.camera.flash = 160;
@@ -343,6 +378,7 @@ export function applyDamage(amount, source) {
     setPlayerAnimation(player, 'death', { force: true });
   }
   if (player.stats.hp > 0) {
+    player.state = 'hit';
     setPlayerAnimation(player, 'hit', { force: true });
     const fx = createFxAnimator('flash');
     if (fx) {
@@ -354,6 +390,21 @@ export function applyDamage(amount, source) {
         layer: 'front',
         life: 0,
         ttl: 240
+      });
+    }
+    for (let i = 0; i < 5; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 140 + Math.random() * 80;
+      gameState.particles.push({
+        type: 'blood',
+        position: { ...player.position },
+        velocity: { x: Math.cos(angle) * speed, y: Math.sin(angle) * speed },
+        color: 'rgba(248,113,113,0.7)',
+        size: 5 + Math.random() * 2,
+        life: 0,
+        ttl: 380,
+        damping: 0.82,
+        layer: 'front'
       });
     }
   }
@@ -377,16 +428,68 @@ export function gainExperience(amount) {
   }
 }
 
+const DIRECT_EQUIP_STATS = new Set(['damage', 'hp', 'mp', 'crit', 'lifesteal', 'range', 'attackSpeed', 'maxHp', 'maxMp', 'moveSpeed', 'armor', 'block']);
+
+export function applySpecialEffects(effects = {}) {
+  const player = gameState.player;
+  if (!player) return;
+  player.specialEffects = player.specialEffects || {};
+  Object.entries(effects).forEach(([key, value]) => {
+    if (value === undefined || value === null) return;
+    if (typeof value === 'number') {
+      player.specialEffects[key] = (player.specialEffects[key] || 0) + value;
+    } else {
+      player.specialEffects[key] = value;
+    }
+  });
+}
+
 export function applyEquipmentBonuses(bonuses) {
   const player = gameState.player;
   if (!player) return;
-  player.stats.damage += bonuses.damage || 0;
-  player.stats.maxHp += bonuses.hp || 0;
-  player.stats.maxMp += bonuses.mp || 0;
-  player.stats.crit += bonuses.crit || 0;
-  player.stats.lifesteal += bonuses.lifesteal || 0;
-  if (bonuses.range) player.stats.range += bonuses.range;
-  if (bonuses.attackSpeed) player.stats.attackSpeed = Math.max(0.15, player.stats.attackSpeed - bonuses.attackSpeed);
+  Object.entries(bonuses || {}).forEach(([key, value]) => {
+    if (value === undefined || value === null) return;
+    if (DIRECT_EQUIP_STATS.has(key)) {
+      switch (key) {
+        case 'damage':
+          player.stats.damage += value;
+          break;
+        case 'hp':
+        case 'maxHp':
+          player.stats.maxHp += value;
+          break;
+        case 'mp':
+        case 'maxMp':
+          player.stats.maxMp += value;
+          break;
+        case 'crit':
+          player.stats.crit += value;
+          break;
+        case 'lifesteal':
+          player.stats.lifesteal += value;
+          break;
+        case 'range':
+          player.stats.range += value;
+          break;
+        case 'attackSpeed':
+          player.stats.attackSpeed = Math.max(0.12, player.stats.attackSpeed - value);
+          break;
+        case 'moveSpeed':
+          player.stats.moveSpeed += player.stats.moveSpeed * value;
+          break;
+        case 'armor':
+          player.stats.armor = (player.stats.armor || 0) + value;
+          break;
+        case 'block':
+          applySpecialEffects({ block: value });
+          break;
+        default:
+          break;
+      }
+    } else {
+      applySpecialEffects({ [key]: value });
+    }
+  });
 }
 
 export function resetEquipmentBonuses() {
@@ -398,10 +501,42 @@ export function resetEquipmentBonuses() {
   player.stats.damage = base.base.damage + LEVELING.damagePerLevel[player.classId] * (player.level - 1);
   player.stats.range = base.base.range;
   player.stats.attackSpeed = base.base.attackSpeed || 0.3;
+  player.stats.moveSpeed = base.base.move;
   player.stats.hp = Math.min(player.stats.hp, player.stats.maxHp);
   player.stats.mp = Math.min(player.stats.mp, player.stats.maxMp);
   player.stats.crit = 0.05;
   player.stats.lifesteal = 0;
+  player.stats.armor = 0;
+  player.specialEffects = {};
+}
+
+export function computePlayerHit(enemy, baseDamage, context = {}) {
+  const player = gameState.player;
+  if (!player) return { damage: baseDamage, crit: false };
+  const effects = player.specialEffects || {};
+  let damage = baseDamage;
+  if (context.skillId === 'fireball') {
+    damage *= 1 + (effects.fireDamage || 0);
+  }
+  if (enemy?.isBoss && effects.bossDamage) {
+    damage *= 1 + effects.bossDamage;
+  }
+  if (context.applyDamageMult && effects.damageMult) {
+    damage *= 1 + effects.damageMult;
+  }
+  const critBonus = effects.crit || 0;
+  const backstabBonus = context.backstab ? (effects.backstabBonus || 0) : 0;
+  const critChance = Math.max(0, Math.min(0.95, player.stats.crit + critBonus + backstabBonus));
+  const crit = Math.random() < critChance;
+  if (crit) {
+    damage *= 1.6;
+  }
+  const lifesteal = player.stats.lifesteal + (effects.lifesteal || 0);
+  if (lifesteal > 0 && damage > 0) {
+    const heal = damage * lifesteal;
+    player.stats.hp = Math.min(player.stats.maxHp, player.stats.hp + heal);
+  }
+  return { damage, crit };
 }
 
 export function unlockTalent(talentId) {

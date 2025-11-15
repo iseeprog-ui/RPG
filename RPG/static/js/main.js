@@ -1,6 +1,6 @@
 import { WORLD, PLAYER_CLASSES, RARITY_COLORS } from './constants.js';
 import { gameState, resetGameState } from './state.js';
-import { createPlayer, updatePlayer, applyDamage, unlockBranchNode } from './player.js';
+import { createPlayer, updatePlayer, applyDamage, computePlayerHit, applyEquipmentBonuses, applySpecialEffects, resetEquipmentBonuses, unlockBranchNode } from './player.js';
 import { spawnZoneEnemies, updateEnemies, damageEnemy, findEnemiesInRange } from './enemies.js';
 import { buildWorld } from './world.js';
 import { initQuests, updateQuest, getQuestData } from './quests.js';
@@ -195,7 +195,13 @@ function resolvePlayerAttack(payload) {
     spawnSwingEffect(payload.origin, payload.facing, radius, arc);
     const enemies = findEnemiesInRange(payload.origin.x, payload.origin.y, radius);
     enemies.forEach(({ enemy }) => {
-      damageEnemy(enemy, payload.stats.damage);
+      const hit = computePlayerHit(enemy, payload.stats.damage, { attackType: payload.type });
+      damageEnemy(enemy, hit.damage, { attacker: 'player', crit: hit.crit, attackType: payload.type });
+      spawnBloodSpray(enemy.position, hit.crit);
+      spawnSparkBurst(enemy.position, hit.crit ? 'rgba(253,224,71,0.85)' : 'rgba(255,255,255,0.45)', hit.crit ? 6 : 3);
+      if (hit.crit) {
+        gameState.camera.shake = Math.max(gameState.camera.shake, WORLD.hitShake + 4);
+      }
       updateQuest('kill', enemy.type, 1);
       spawnImpactEffect(enemy.position, 'rgba(255,255,255,0.35)', 20);
     });
@@ -217,10 +223,13 @@ function resolvePlayerAttack(payload) {
     gameState.player.position.y += Math.sin(payload.facing) * distance;
     const enemies = findEnemiesInRange(gameState.player.position.x, gameState.player.position.y, 70);
     enemies.forEach(({ enemy }) => {
-      damageEnemy(enemy, payload.stats.damage);
+      const hit = computePlayerHit(enemy, payload.stats.damage, { attackType: 'dash', backstab: true });
+      damageEnemy(enemy, hit.damage, { attacker: 'player', crit: hit.crit, attackType: 'dash' });
+      spawnBloodSpray(enemy.position, hit.crit, 'rgba(99,102,241,0.8)');
       spawnImpactEffect(enemy.position, 'rgba(167,139,250,0.45)', 22);
     });
     spawnImpactEffect(gameState.player.position, 'rgba(167,139,250,0.35)', 26);
+    spawnShadowBurst(gameState.player.position, 32);
   }
 }
 
@@ -234,7 +243,7 @@ function resolvePlayerSkill(skill) {
           type: 'arrow',
           position: { ...skill.origin },
           velocity: { x: Math.cos(angle) * 420, y: Math.sin(angle) * 420 },
-          damage: gameState.player.stats.damage * 0.9,
+          damage: skill.projectileDamage,
           owner: 'player',
           radius: 6
         });
@@ -248,12 +257,17 @@ function resolvePlayerSkill(skill) {
         damage: skill.damage,
         owner: 'player',
         radius: 22,
-        explosion: { radius: skill.radius }
+        explosion: { radius: skill.radius, skillId: 'fireball' }
       });
       break;
     case 'powerStrike':
       const enemies = findEnemiesInRange(skill.origin.x, skill.origin.y, skill.arc);
-      enemies.forEach(({ enemy }) => damageEnemy(enemy, skill.damage));
+      enemies.forEach(({ enemy }) => {
+        const hit = computePlayerHit(enemy, skill.damage, { skillId: 'powerStrike', attackType: 'arc' });
+        damageEnemy(enemy, hit.damage, { attacker: 'player', crit: hit.crit, skill: 'powerStrike' });
+        spawnBloodSpray(enemy.position, hit.crit);
+        spawnImpactEffect(enemy.position, 'rgba(248,113,113,0.35)', 24);
+      });
       spawnSwingEffect(skill.origin, skill.facing, skill.arc, Math.PI * 0.9);
       break;
     case 'rage':
@@ -268,8 +282,13 @@ function resolvePlayerSkill(skill) {
       gameState.player.position.x += Math.cos(skill.facing) * skill.dash;
       gameState.player.position.y += Math.sin(skill.facing) * skill.dash;
       const targetEnemies = findEnemiesInRange(gameState.player.position.x, gameState.player.position.y, 90);
-      targetEnemies.forEach(({ enemy }) => damageEnemy(enemy, skill.damage));
+      targetEnemies.forEach(({ enemy }) => {
+        const hit = computePlayerHit(enemy, skill.damage, { skillId: 'shadowStep', backstab: true });
+        damageEnemy(enemy, hit.damage, { attacker: 'player', crit: hit.crit, skill: 'shadowStep' });
+        spawnBloodSpray(enemy.position, hit.crit, 'rgba(99,102,241,0.8)');
+      });
       spawnImpactEffect(gameState.player.position, 'rgba(99,102,241,0.45)', 28);
+      spawnShadowBurst(gameState.player.position, 40);
       break;
   }
 }
@@ -293,19 +312,51 @@ function updateProjectiles(dt) {
     projectile.position.x += projectile.velocity.x * speedFactor;
     projectile.position.y += projectile.velocity.y * speedFactor;
     if (projectile.owner === 'player') {
+      const player = gameState.player;
+      const effects = player?.specialEffects || {};
+      let consumed = false;
       gameState.enemies.forEach(enemy => {
         if (enemy.stats.hp <= 0) return;
-        if (Math.hypot(enemy.position.x - projectile.position.x, enemy.position.y - projectile.position.y) <= (projectile.radius + 12)) {
-          damageEnemy(enemy, projectile.damage);
-          projectile.remove = true;
+        if (projectile.hitSet?.has(enemy.id)) return;
+        const distance = Math.hypot(enemy.position.x - projectile.position.x, enemy.position.y - projectile.position.y);
+        if (distance <= (projectile.radius + 12)) {
+          const context = { projectileType: projectile.type, skillId: projectile.explosion?.skillId };
+          const hit = computePlayerHit(enemy, projectile.damage, context);
+          damageEnemy(enemy, hit.damage, { attacker: 'player', crit: hit.crit, projectile: projectile.type });
+          projectile.hitSet?.add(enemy.id);
+          spawnBloodSpray(enemy.position, hit.crit);
           spawnImpactEffect(projectile.position, 'rgba(255,255,255,0.4)', 18);
+          if (hit.crit) {
+            spawnSparkBurst(enemy.position, 'rgba(253,224,71,0.85)', 6);
+            gameState.camera.shake = Math.max(gameState.camera.shake, WORLD.hitShake + 3);
+          }
+          consumed = true;
           if (projectile.explosion) {
+            spawnFireBurst(projectile.position, projectile.explosion.radius);
             const affected = findEnemiesInRange(projectile.position.x, projectile.position.y, projectile.explosion.radius);
-            affected.forEach(({ enemy: aoeEnemy }) => damageEnemy(aoeEnemy, projectile.damage * 0.75));
-            spawnImpactEffect(projectile.position, 'rgba(248,113,113,0.45)', projectile.explosion.radius * 0.6);
+            affected.forEach(({ enemy: aoeEnemy }) => {
+              const aoeHit = computePlayerHit(aoeEnemy, projectile.damage * 0.75, { skillId: projectile.explosion.skillId });
+              damageEnemy(aoeEnemy, aoeHit.damage, { attacker: 'player', crit: aoeHit.crit, projectile: projectile.type });
+              spawnBloodSpray(aoeEnemy.position, aoeHit.crit, 'rgba(248,113,113,0.8)');
+            });
+            gameState.camera.flash = Math.max(gameState.camera.flash, 220);
+            gameState.camera.shake = Math.max(gameState.camera.shake, WORLD.hitShake + 5);
           }
         }
       });
+      if (projectile.type === 'arrow' && consumed) {
+        const pierceChance = effects.pierceChance || 0;
+        if (Math.random() < pierceChance) {
+          projectile.damage *= 0.8;
+          consumed = false;
+        }
+      }
+      if (consumed && !projectile.explosion) {
+        projectile.remove = true;
+      }
+      if (projectile.explosion && consumed) {
+        projectile.remove = true;
+      }
     } else {
       const player = gameState.player;
       if (player && Math.hypot(player.position.x - projectile.position.x, player.position.y - projectile.position.y) <= (projectile.radius + 14)) {
@@ -327,7 +378,8 @@ function spawnProjectile(data) {
     life: 0,
     rotation: Math.atan2(data.velocity?.y || 0, data.velocity?.x || 1),
     scale: 1,
-    trailTimer: data.trailInterval || 0
+    trailTimer: data.trailInterval || 0,
+    hitSet: new Set()
   };
   if (!projectile.radius) projectile.radius = 6;
   if (projectile.type === 'arrow') {
@@ -377,6 +429,8 @@ function enemyStrike(enemy, player, distance) {
   const amount = enemy.stats.damage * reduction;
   applyDamage(amount, enemy);
   spawnImpactEffect(player.position, 'rgba(248,113,113,0.45)', 26);
+  spawnBloodSpray(player.position, amount > 25, 'rgba(248,113,113,0.75)');
+  spawnSparkBurst(player.position, 'rgba(248,113,113,0.6)', 4);
 }
 
 function bossPhase(enemy, phase) {
@@ -614,6 +668,14 @@ function loadGame() {
   }
   player.inventory = cloneItems(data.inventory);
   player.equipment = cloneEquipment(data.equipment);
+  resetEquipmentBonuses();
+  Object.values(player.equipment).forEach(eq => {
+    if (!eq) return;
+    applyEquipmentBonuses(eq.stats || {});
+    if (eq.legendary?.bonuses) applyEquipmentBonuses(eq.legendary.bonuses);
+    if (eq.special) applySpecialEffects(eq.special);
+    if (eq.legendary?.special) applySpecialEffects(eq.legendary.special);
+  });
   if (data.quests) {
     gameState.quests = data.quests;
   }
@@ -703,6 +765,69 @@ function spawnImpactEffect(position, color, radius = 24) {
   });
 }
 
+function spawnBloodSpray(position, crit = false, color = 'rgba(248,113,113,0.85)') {
+  if (!position) return;
+  const count = crit ? 10 : 5;
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 90 + Math.random() * 80;
+    gameState.particles.push({
+      type: 'blood',
+      position: { x: position.x, y: position.y },
+      velocity: { x: Math.cos(angle) * speed, y: Math.sin(angle) * speed },
+      color,
+      size: 6 + Math.random() * 3,
+      life: 0,
+      ttl: 420 + Math.random() * 200,
+      layer: 'front',
+      damping: 0.84
+    });
+  }
+}
+
+function spawnSparkBurst(position, color = 'rgba(253,224,71,0.9)', count = 5) {
+  if (!position) return;
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 160 + Math.random() * 120;
+    gameState.particles.push({
+      type: 'spark',
+      position: { x: position.x, y: position.y },
+      velocity: { x: Math.cos(angle) * speed, y: Math.sin(angle) * speed },
+      color,
+      size: 4 + Math.random() * 2,
+      life: 0,
+      ttl: 260,
+      layer: 'front',
+      damping: 0.78
+    });
+  }
+}
+
+function spawnFireBurst(position, radius = 48) {
+  if (!position) return;
+  gameState.particles.push({
+    type: 'fire',
+    position: { ...position },
+    radius,
+    life: 0,
+    ttl: 420,
+    layer: 'front'
+  });
+}
+
+function spawnShadowBurst(position, radius = 36) {
+  if (!position) return;
+  gameState.particles.push({
+    type: 'shadow',
+    position: { ...position },
+    radius,
+    life: 0,
+    ttl: 320,
+    layer: 'front'
+  });
+}
+
 function spawnTrailEffect(position, color) {
   if (!position || !color) return;
   gameState.particles.push({
@@ -721,6 +846,13 @@ function updateParticles(dt) {
     effect.life = (effect.life || 0) + dt;
     if (effect.animator) {
       effect.animator.update(dt);
+    }
+    if (effect.velocity) {
+      const damp = effect.damping != null ? effect.damping : 0.86;
+      effect.position.x += (effect.velocity.x || 0) * (dt / 1000);
+      effect.position.y += (effect.velocity.y || 0) * (dt / 1000);
+      effect.velocity.x *= damp;
+      effect.velocity.y *= damp;
     }
     if (!effect.triggered && effect.delay != null && effect.life >= effect.delay) {
       effect.triggered = true;

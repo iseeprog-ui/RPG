@@ -5,13 +5,19 @@ import { dropLoot } from './items.js';
 import { updateQuest } from './quests.js';
 import { createEnemySpriteSet, createFxAnimator } from '../assets/sprites.js';
 
+const ZONE_ENEMY_WEIGHTS = {
+  forest: { goblin: 3, skeletonArcher: 2, slime: 2, demon: 0.4, orc: 0.3, troll: 0.2 },
+  lake: { goblin: 1.2, demon: 2.2, skeletonArcher: 1.8, slime: 1.4, orc: 0.8, troll: 1.1 },
+  ruins: { orc: 2.6, demon: 2.4, troll: 2.1, skeletonArcher: 1.1, goblin: 0.4, slime: 0.3 }
+};
+
 function ensureEnemySprites(enemy) {
   if (!enemy.animations) {
     enemy.animations = createEnemySpriteSet(enemy.type) || {};
   }
   if (!enemy.animation || !enemy.animation.animator) {
     const idle = enemy.animations?.idle;
-    enemy.animation = { name: 'idle', animator: idle || null };
+    enemy.animation = { name: 'idle', frame: 0, timer: 0, animator: idle || null };
     if (enemy.animation.animator) enemy.animation.animator.reset();
   }
   if (!enemy.abilityTimers) {
@@ -25,7 +31,7 @@ function setEnemyAnimation(enemy, name, { force = false } = {}) {
   if (!force && enemy.animation?.name === name) return;
   const animator = enemy.animations[name];
   animator.reset();
-  enemy.animation = { name, animator };
+  enemy.animation = { name, frame: 0, timer: 0, animator };
 }
 
 export function spawnZoneEnemies(zoneId, count = 6) {
@@ -57,7 +63,19 @@ export function spawnZoneEnemies(zoneId, count = 6) {
 
 function randomEnemyType(zone) {
   const pool = zone.enemyPool;
-  return pool[Math.floor(Math.random() * pool.length)];
+  const weights = pool.map(type => {
+    const blueprint = ENEMIES[type];
+    const baseWeight = blueprint ? (blueprint.xp || 50) / 50 : 1;
+    const zoneBias = ZONE_ENEMY_WEIGHTS[zone.id]?.[type] || 1;
+    return Math.max(0.1, baseWeight * zoneBias);
+  });
+  const total = weights.reduce((sum, value) => sum + value, 0);
+  let roll = Math.random() * total;
+  for (let i = 0; i < pool.length; i++) {
+    roll -= weights[i];
+    if (roll <= 0) return pool[i];
+  }
+  return pool[pool.length - 1];
 }
 
 function createEnemy(type, zone, rect) {
@@ -168,6 +186,7 @@ export function updateEnemies(dt, callbacks) {
     }
 
     if (abilities.slam) handleSlam(enemy, abilities.slam, dt, player);
+    if (abilities.inferno) handleInferno(enemy, abilities.inferno, dt, player);
     if (abilities.throw) handleThrow(enemy, abilities.throw, dt, callbacks, dirX, dirY);
 
     advanceEnemyAnimation(enemy, dt);
@@ -195,9 +214,13 @@ function advanceEnemyAnimation(enemy, dt) {
   if (!animator) return;
   animator.update(dt);
   enemy.animation.frame = animator.frame;
+  enemy.animation.timer = (enemy.animation.timer || 0) + dt;
   if (!animator.loop && animator.finished) {
     if (['attack', 'hit', 'spawn'].includes(enemy.animation.name)) {
       setEnemyAnimation(enemy, enemy.state === 'death' ? 'death' : 'idle', { force: true });
+      if (enemy.animation.name === 'idle' && enemy.state !== 'death') {
+        enemy.state = 'idle';
+      }
     }
   }
 }
@@ -278,6 +301,37 @@ function handleSlam(enemy, config, dt, player) {
     delay: 320,
     ttl: 620,
     damage: enemy.stats.damage * (config.damageMult || 1.2),
+    owner: enemy,
+    layer: 'front'
+  });
+}
+
+function handleInferno(enemy, config, dt, player) {
+  const infernoCooldown = config.cooldown ?? 5200;
+  enemy.abilityTimers.inferno = (enemy.abilityTimers.inferno ?? infernoCooldown) - dt;
+  if (enemy.abilityTimers.inferno > 0) return;
+  enemy.abilityTimers.inferno = infernoCooldown;
+  const target = player ? { x: player.position.x, y: player.position.y } : { ...enemy.position };
+  const radius = config.radius || 110;
+  const windup = config.windup || 700;
+  setEnemyAnimation(enemy, 'attack', { force: true });
+  gameState.particles.push({
+    type: 'fire',
+    position: target,
+    radius,
+    life: 0,
+    ttl: windup + 360,
+    layer: 'front'
+  });
+  gameState.particles.push({
+    type: 'aoe',
+    position: target,
+    radius,
+    outline: 'rgba(248,113,113,0.85)',
+    color: 'rgba(248,113,113,0.25)',
+    delay: windup,
+    ttl: windup + 380,
+    damage: enemy.stats.damage * (config.damageMult || 1.1),
     owner: enemy,
     layer: 'front'
   });
@@ -421,6 +475,7 @@ export function damageEnemy(enemy, amount, source) {
   if (!enemy || enemy.stats.hp <= 0) return;
   enemy.stats.hp -= amount;
   gameState.camera.shake = Math.max(gameState.camera.shake, WORLD.hitShake * 0.6);
+  enemy.state = 'hit';
   setEnemyAnimation(enemy, 'hit', { force: true });
   const fx = createFxAnimator('impact');
   if (fx) {

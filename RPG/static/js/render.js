@@ -343,6 +343,18 @@ function drawEffects(layer) {
         case 'meteor':
           drawMeteorEffect(effect, progress);
           break;
+        case 'blood':
+          drawBloodEffect(effect, progress);
+          break;
+        case 'spark':
+          drawSparkEffect(effect, progress);
+          break;
+        case 'fire':
+          drawFireEffect(effect, progress);
+          break;
+        case 'shadow':
+          drawShadowEffect(effect, progress);
+          break;
         default:
           break;
       }
@@ -420,6 +432,63 @@ function drawMeteorEffect(effect, progress) {
   ctx.moveTo(effect.position.x, effect.position.y - effect.radius);
   ctx.lineTo(effect.position.x, effect.position.y + effect.radius);
   ctx.stroke();
+  ctx.restore();
+}
+
+function drawBloodEffect(effect, progress) {
+  ctx.save();
+  ctx.globalAlpha = Math.max(0, 1 - progress);
+  ctx.fillStyle = effect.color || 'rgba(248,113,113,0.8)';
+  const size = Math.max(2, (effect.size || 6) * (1 - progress * 0.7));
+  ctx.beginPath();
+  ctx.arc(effect.position.x, effect.position.y, size, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawSparkEffect(effect, progress) {
+  ctx.save();
+  ctx.globalAlpha = Math.max(0, 1 - progress);
+  ctx.strokeStyle = effect.color || 'rgba(253,224,71,0.9)';
+  ctx.lineWidth = 2;
+  const length = (effect.size || 4) * (1 + progress);
+  ctx.beginPath();
+  ctx.moveTo(effect.position.x - length / 2, effect.position.y);
+  ctx.lineTo(effect.position.x + length / 2, effect.position.y);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawFireEffect(effect, progress) {
+  ctx.save();
+  const radius = (effect.radius || 40) * (0.5 + progress * 0.8);
+  const gradient = ctx.createRadialGradient(
+    effect.position.x,
+    effect.position.y,
+    radius * 0.1,
+    effect.position.x,
+    effect.position.y,
+    radius
+  );
+  gradient.addColorStop(0, 'rgba(251,191,36,0.85)');
+  gradient.addColorStop(0.5, 'rgba(248,113,113,0.55)');
+  gradient.addColorStop(1, 'rgba(124,58,237,0)');
+  ctx.globalAlpha = 0.6;
+  ctx.fillStyle = gradient;
+  ctx.beginPath();
+  ctx.arc(effect.position.x, effect.position.y, radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawShadowEffect(effect, progress) {
+  ctx.save();
+  ctx.globalAlpha = 0.4 + (1 - progress) * 0.4;
+  ctx.fillStyle = 'rgba(30,41,59,0.8)';
+  const radius = (effect.radius || 32) * (1 - progress * 0.4);
+  ctx.beginPath();
+  ctx.arc(effect.position.x, effect.position.y, radius, 0, Math.PI * 2);
+  ctx.fill();
   ctx.restore();
 }
 

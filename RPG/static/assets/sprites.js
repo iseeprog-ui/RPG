@@ -107,52 +107,58 @@ function drawPlayerBase(ctx, template, offsetY = 0, sway = 0, pose = {}) {
 function drawPlayerWeapon(ctx, template, animation, frame, totalFrames) {
   switch (template.weapon) {
     case 'sword':
-      drawSword(ctx, frame, totalFrames, template);
+      drawSword(ctx, frame, totalFrames, template, animation);
       break;
     case 'axe':
-      drawAxe(ctx, frame, totalFrames, template);
+      drawAxe(ctx, frame, totalFrames, template, animation);
       break;
     case 'bow':
-      drawBow(ctx, frame, totalFrames, template);
+      drawBow(ctx, frame, totalFrames, template, animation);
       break;
     case 'staff':
-      drawStaff(ctx, frame, totalFrames, template);
+      drawStaff(ctx, frame, totalFrames, template, animation);
       break;
     case 'dagger':
-      drawDaggers(ctx, frame, totalFrames, template);
+      drawDaggers(ctx, frame, totalFrames, template, animation);
       break;
     default:
       break;
   }
 }
 
-function drawSword(ctx, frame, total, template) {
+function drawSword(ctx, frame, total, template, animation) {
   const progress = frame / (total - 1 || 1);
   ctx.save();
-  ctx.translate(24, 20);
-  ctx.rotate(-Math.PI / 3 + progress * Math.PI * 1.4);
+  ctx.translate(24, animation === 'cast' ? 14 : 20);
+  const baseRotation = animation === 'cast' ? -Math.PI / 2.2 : -Math.PI / 3;
+  const swing = animation === 'cast' ? Math.PI * 0.35 : Math.PI * 1.4;
+  ctx.rotate(baseRotation + progress * swing);
   ctx.fillStyle = 'rgba(255,255,255,0.7)';
   ctx.fillRect(0, -3, 18, 6);
   ctx.fillStyle = lighten(template.trim, -18);
   ctx.fillRect(-4, -4, 6, 8);
   ctx.restore();
   ctx.save();
-  ctx.translate(24, 20);
-  ctx.rotate(-Math.PI / 4 + progress * Math.PI * 1.3);
+  ctx.translate(24, animation === 'cast' ? 14 : 20);
   ctx.strokeStyle = template.aura;
-  ctx.globalAlpha = 0.6;
-  ctx.lineWidth = 6;
+  ctx.globalAlpha = animation === 'cast' ? 0.85 : 0.6;
+  ctx.lineWidth = animation === 'cast' ? 8 : 6;
+  const radius = animation === 'cast' ? 26 : 22;
+  const start = animation === 'cast' ? -Math.PI / 2 : -Math.PI / 4;
+  const end = animation === 'cast' ? Math.PI / 3 : Math.PI / 6;
   ctx.beginPath();
-  ctx.arc(0, 0, 22, -Math.PI / 4, Math.PI / 6);
+  ctx.arc(0, 0, radius, start, end);
   ctx.stroke();
   ctx.restore();
 }
 
-function drawAxe(ctx, frame, total, template) {
+function drawAxe(ctx, frame, total, template, animation) {
   const progress = frame / (total - 1 || 1);
   ctx.save();
-  ctx.translate(24, 18);
-  ctx.rotate(-Math.PI / 2 + progress * Math.PI * 1.6);
+  ctx.translate(24, animation === 'cast' ? 16 : 18);
+  const baseRotation = animation === 'cast' ? -Math.PI / 1.8 : -Math.PI / 2;
+  const swing = animation === 'cast' ? Math.PI * 0.5 : Math.PI * 1.6;
+  ctx.rotate(baseRotation + progress * swing);
   ctx.fillStyle = lighten(template.body, -60);
   ctx.fillRect(-2, -14, 4, 24);
   ctx.fillStyle = '#fee2e2';
@@ -164,20 +170,20 @@ function drawAxe(ctx, frame, total, template) {
   ctx.fill();
   ctx.restore();
   ctx.save();
-  ctx.translate(24, 18);
-  ctx.rotate(-Math.PI / 2 + progress * Math.PI * 1.6);
+  ctx.translate(24, animation === 'cast' ? 16 : 18);
+  ctx.rotate(baseRotation + progress * swing);
   ctx.strokeStyle = 'rgba(239,68,68,0.8)';
-  ctx.globalAlpha = 0.6;
-  ctx.lineWidth = 8;
+  ctx.globalAlpha = animation === 'cast' ? 0.9 : 0.6;
+  ctx.lineWidth = animation === 'cast' ? 10 : 8;
   ctx.beginPath();
-  ctx.arc(0, 0, 26, -Math.PI / 2, Math.PI / 3);
+  ctx.arc(0, 0, animation === 'cast' ? 30 : 26, -Math.PI / 2, Math.PI / 3);
   ctx.stroke();
   ctx.restore();
 }
 
-function drawBow(ctx, frame, total, template) {
+function drawBow(ctx, frame, total, template, animation) {
   const progress = frame / (total - 1 || 1);
-  const draw = Math.min(1, progress * 1.4);
+  const draw = Math.min(1, progress * (animation === 'cast' ? 1.1 : 1.4));
   ctx.fillStyle = lighten(template.trim, -20);
   ctx.fillRect(14, 6, 4, 22);
   ctx.fillRect(30, 6, 4, 22);
@@ -189,32 +195,42 @@ function drawBow(ctx, frame, total, template) {
   ctx.stroke();
   ctx.fillStyle = '#fde047';
   ctx.fillRect(16 + draw * 8, 16, 10, 4);
-  ctx.fillStyle = 'rgba(14,165,233,0.4)';
+  ctx.fillStyle = animation === 'cast' ? 'rgba(59,130,246,0.45)' : 'rgba(14,165,233,0.4)';
   ctx.fillRect(16 + draw * 8, 13, 12, 2);
+  if (animation === 'cast') {
+    ctx.fillStyle = 'rgba(59,130,246,0.25)';
+    ctx.fillRect(12, 8, 28, 6);
+  }
 }
 
-function drawStaff(ctx, frame, total, template) {
+function drawStaff(ctx, frame, total, template, animation) {
   const progress = frame / (total - 1 || 1);
   ctx.fillStyle = '#f1f5f9';
-  ctx.fillRect(32, 4, 4, 26);
+  ctx.fillRect(32, animation === 'cast' ? 0 : 4, 4, 26);
   ctx.fillStyle = lighten(template.trim, 14);
-  ctx.fillRect(30, 6, 8, 6);
-  ctx.fillStyle = 'rgba(129,140,248,0.7)';
-  const pulse = 6 + Math.sin(progress * Math.PI * 2) * 2;
+  ctx.fillRect(30, animation === 'cast' ? -2 : 6, 8, 6);
+  ctx.fillStyle = animation === 'cast' ? 'rgba(192,132,252,0.65)' : 'rgba(129,140,248,0.7)';
+  const pulse = 6 + Math.sin(progress * Math.PI * 2) * (animation === 'cast' ? 3 : 2);
   ctx.beginPath();
-  ctx.arc(34, 6, pulse, 0, Math.PI * 2);
+  ctx.arc(34, animation === 'cast' ? 0 : 6, pulse, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = 'rgba(129,140,248,0.3)';
-  ctx.fillRect(24, 16, 16, 12);
-  ctx.fillStyle = 'rgba(94,234,212,0.6)';
-  ctx.fillRect(18, 16 - progress * 10, 10, 10);
+  ctx.fillStyle = animation === 'cast' ? 'rgba(165,180,252,0.35)' : 'rgba(129,140,248,0.3)';
+  ctx.fillRect(24 - frame * (animation === 'cast' ? 0.4 : 0), 16 - (animation === 'cast' ? frame * 0.6 : 0), 16 + frame * (animation === 'cast' ? 1.2 : 0), 12 + frame * (animation === 'cast' ? 0.8 : 0));
+  if (animation === 'cast') {
+    ctx.fillStyle = 'rgba(129,140,248,0.45)';
+    ctx.fillRect(18 - frame * 0.3, 12 - frame * 0.5, 20 + frame, 10 + frame * 0.8);
+  } else {
+    ctx.fillStyle = 'rgba(94,234,212,0.6)';
+    ctx.fillRect(18, 16 - progress * 10, 10, 10);
+  }
 }
 
-function drawDaggers(ctx, frame, total, template) {
+function drawDaggers(ctx, frame, total, template, animation) {
   const progress = frame / (total - 1 || 1);
-  const angle = -Math.PI / 3 + progress * Math.PI;
+  const angle = -Math.PI / 3 + progress * Math.PI * (animation === 'cast' ? 0.8 : 1.0);
+  const lift = animation === 'cast' ? 4 : 0;
   ctx.save();
-  ctx.translate(20, 20);
+  ctx.translate(20, 20 - lift);
   ctx.rotate(angle);
   ctx.fillStyle = '#f8fafc';
   ctx.fillRect(0, -2, 14, 4);
@@ -222,21 +238,21 @@ function drawDaggers(ctx, frame, total, template) {
   ctx.fillRect(-4, -3, 6, 6);
   ctx.restore();
   ctx.save();
-  ctx.translate(28, 20);
-  ctx.rotate(angle + 0.6);
+  ctx.translate(28, 20 - lift);
+  ctx.rotate(angle + (animation === 'cast' ? 0.4 : 0.6));
   ctx.fillStyle = '#f8fafc';
   ctx.fillRect(0, -2, 12, 4);
   ctx.fillStyle = lighten(template.trim, -10);
   ctx.fillRect(-4, -3, 6, 6);
   ctx.restore();
   ctx.save();
-  ctx.translate(24, 18);
+  ctx.translate(24, 18 - lift);
   ctx.rotate(angle);
   ctx.strokeStyle = 'rgba(251,191,36,0.6)';
-  ctx.globalAlpha = 0.55;
-  ctx.lineWidth = 5;
+  ctx.globalAlpha = animation === 'cast' ? 0.8 : 0.55;
+  ctx.lineWidth = animation === 'cast' ? 6 : 5;
   ctx.beginPath();
-  ctx.arc(0, 0, 20, -Math.PI / 3, Math.PI / 6);
+  ctx.arc(0, 0, animation === 'cast' ? 24 : 20, -Math.PI / 3, Math.PI / 6);
   ctx.stroke();
   ctx.restore();
 }
@@ -247,6 +263,7 @@ function buildPlayerAnimations() {
     const idleFrames = [];
     const walkFrames = [];
     const attackFrames = [];
+    const castFrames = [];
     const hitFrames = [];
     const deathFrames = [];
 
@@ -294,6 +311,35 @@ function buildPlayerAnimations() {
       attackFrames.push(canvas);
     }
 
+    for (let i = 0; i < 8; i++) {
+      const { canvas, ctx } = createFrame(size);
+      const lift = Math.sin((i / 8) * Math.PI) * 2.4;
+      const sway = Math.cos((i / 8) * Math.PI) * 1.6;
+      drawPlayerBase(ctx, template, lift, sway, {
+        armSwing: Math.sin((i / 8) * Math.PI) * 1.2 + 2,
+        legSwing: Math.cos((i / 8) * Math.PI) * 0.4
+      });
+      drawPlayerWeapon(ctx, template, 'cast', i, 8);
+      if (template.weapon === 'staff') {
+        ctx.fillStyle = 'rgba(129,140,248,0.4)';
+        ctx.fillRect(14 - i, 10 - i * 0.5, 24 + i * 2, 16 + i);
+      } else if (template.weapon === 'bow') {
+        ctx.fillStyle = 'rgba(59,130,246,0.25)';
+        ctx.fillRect(18, 12 - i * 0.3, 16 + i, 10 + i * 0.4);
+      } else if (template.weapon === 'sword') {
+        ctx.fillStyle = 'rgba(253,224,71,0.35)';
+        ctx.fillRect(18 - i, 8, 12 + i * 2, 12 + i);
+      } else if (template.weapon === 'axe') {
+        ctx.fillStyle = 'rgba(248,113,113,0.3)';
+        ctx.fillRect(16 - i, 10, 18 + i * 2, 14 + i * 0.8);
+      } else if (template.weapon === 'dagger') {
+        ctx.fillStyle = 'rgba(251,191,36,0.28)';
+        ctx.fillRect(14 - i, 14 - i * 0.4, 20 + i * 2, 12 + i * 0.6);
+      }
+      addNoise(ctx, size, template.body, 0.06);
+      castFrames.push(canvas);
+    }
+
     for (let i = 0; i < 4; i++) {
       const { canvas, ctx } = createFrame(size);
       drawPlayerBase(ctx, template, 0, 0, {});
@@ -330,6 +376,7 @@ function buildPlayerAnimations() {
       idle: makeAnimation(idleFrames, 8, { loop: true, anchor: { x: 0.5, y: 0.9 } }),
       walk: makeAnimation(walkFrames, 12, { loop: true, anchor: { x: 0.5, y: 0.9 } }),
       attack: makeAnimation(attackFrames, 14, { loop: false, anchor: { x: 0.5, y: 0.9 } }),
+      cast: makeAnimation(castFrames, 12, { loop: false, anchor: { x: 0.5, y: 0.9 } }),
       hit: makeAnimation(hitFrames, 16, { loop: false, anchor: { x: 0.5, y: 0.9 } }),
       death: makeAnimation(deathFrames, 10, { loop: false, anchor: { x: 0.5, y: 0.9 } })
     });

@@ -178,7 +178,7 @@ export const ENEMIES = {
     xp: 95,
     ranged: true,
     projectile: 'fireball',
-    abilities: { blink: { distance: 140, cooldown: 6200 } }
+    abilities: { blink: { distance: 140, cooldown: 6200 }, inferno: { radius: 120, cooldown: 5600, windup: 750, damageMult: 1.15 } }
   },
   troll: {
     label: 'Тролль-каменщик',
@@ -282,7 +282,7 @@ export const LOOT_TABLE = {
   uncommon: 0.28,
   rare: 0.14,
   epic: 0.06,
-  legendary: 0.02
+  legendary: 0.008
 };
 
 export const CLASS_LEGENDARIES = {
@@ -290,9 +290,10 @@ export const CLASS_LEGENDARIES = {
     icon: '🏹',
     name: 'Лук сумеречного ястреба',
     slot: 'weapon',
-    stats: { damage: 32, range: 420, pierce: 2 },
+    stats: { damage: 32, range: 420 },
     aura: { inner: 'rgba(96,165,250,0.6)', outer: 'rgba(30,64,175,0.3)' },
-    bonuses: { extraProjectiles: 2, spread: 10 },
+    bonuses: {},
+    special: { pierceChance: 0.5, extraProjectiles: 2, projectileSpread: 10 },
     requires: ['ranger'],
     description: 'Стрелы пронзают нескольких врагов и летят невероятно далеко.',
     requiredClass: 'ranger'
@@ -303,7 +304,8 @@ export const CLASS_LEGENDARIES = {
     slot: 'weapon',
     stats: { damage: 36, range: 260 },
     aura: { inner: 'rgba(192,132,252,0.6)', outer: 'rgba(76,29,149,0.3)' },
-    bonuses: { fireballRadius: 30, fireDamage: 0.25 },
+    bonuses: {},
+    special: { fireballRadius: 30, fireDamage: 0.25 },
     requires: ['mage'],
     description: 'Огненный шар становится шире и обжигает сильнее, подпитывая магию.',
     requiredClass: 'mage'
@@ -312,9 +314,10 @@ export const CLASS_LEGENDARIES = {
     icon: '⚔️',
     name: 'Клинок легиона',
     slot: 'weapon',
-    stats: { damage: 40, attackSpeed: 0.18, block: 0.1 },
+    stats: { damage: 40, attackSpeed: 0.18 },
     aura: { inner: 'rgba(248,250,252,0.6)', outer: 'rgba(59,130,246,0.3)' },
-    bonuses: { arc: 35, damageMult: 0.25 },
+    bonuses: {},
+    special: { block: 0.12, arcBonus: 35, damageMult: 0.25 },
     requires: ['warrior'],
     description: 'Удары расходятся широкой дугой, блокируя и отражая атаки.',
     requiredClass: 'warrior'
@@ -323,9 +326,10 @@ export const CLASS_LEGENDARIES = {
     icon: '🪓',
     name: 'Громовой разрубатель',
     slot: 'weapon',
-    stats: { damage: 48, attackSpeed: 0.15, lifesteal: 0.15 },
+    stats: { damage: 48, attackSpeed: 0.15, lifesteal: 0.1 },
     aura: { inner: 'rgba(248,113,113,0.6)', outer: 'rgba(185,28,28,0.3)' },
-    bonuses: { rageDuration: 3, bossDamage: 0.3 },
+    bonuses: {},
+    special: { rageDuration: 3, bossDamage: 0.3 },
     requires: ['berserker'],
     description: 'Вампиризм и бешенство усиливаются, особенно против боссов.',
     requiredClass: 'berserker'
@@ -336,7 +340,8 @@ export const CLASS_LEGENDARIES = {
     slot: 'weapon',
     stats: { damage: 34, attackSpeed: 0.12, crit: 0.18 },
     aura: { inner: 'rgba(167,139,250,0.65)', outer: 'rgba(91,33,182,0.35)' },
-    bonuses: { stealthDuration: 2, dashDistance: 60 },
+    bonuses: {},
+    special: { stealthDuration: 2, dashDistance: 60, backstabBonus: 0.25 },
     requires: ['assassin'],
     description: 'Удары из невидимости наносят сокрушительные критические раны.',
     requiredClass: 'assassin'
