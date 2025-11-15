@@ -44,6 +44,20 @@ const ui = {
   newCharacter: document.getElementById('new-character')
 };
 
+const RARITY_NAMES = {
+  common: 'Обычный',
+  uncommon: 'Необычный',
+  rare: 'Редкий',
+  epic: 'Эпический',
+  legendary: 'Легендарный'
+};
+
+const ZONE_NAMES = {
+  forest: 'Лес',
+  lake: 'Озеро',
+  ruins: 'Руины'
+};
+
 let selectedClass = 'ranger';
 let lastTime = 0;
 let running = false;
@@ -157,6 +171,7 @@ function update(dt) {
     onSkill: resolvePlayerSkill
   });
   updateProjectiles(dt);
+  updateParticles(dt);
   updateEnemies(dt, {
     onEnemyShoot: spawnEnemyProjectile,
     onEnemyStrike: enemyStrike,
@@ -173,11 +188,16 @@ function update(dt) {
 
 function resolvePlayerAttack(payload) {
   if (payload.type === 'arc' || payload.type === 'spin') {
-    const radius = payload.stats.arc || payload.stats.radius || 80;
+    const radius = payload.stats.range || payload.stats.radius || 80;
+    const arc = payload.type === 'spin'
+      ? Math.PI * 2
+      : (payload.stats.arc || 90) * Math.PI / 180;
+    spawnSwingEffect(payload.origin, payload.facing, radius, arc);
     const enemies = findEnemiesInRange(payload.origin.x, payload.origin.y, radius);
     enemies.forEach(({ enemy }) => {
       damageEnemy(enemy, payload.stats.damage);
       updateQuest('kill', enemy.type, 1);
+      spawnImpactEffect(enemy.position, 'rgba(255,255,255,0.35)', 20);
     });
   } else if (payload.type === 'arrow' || payload.type === 'orb') {
     spawnProjectile({
@@ -198,7 +218,9 @@ function resolvePlayerAttack(payload) {
     const enemies = findEnemiesInRange(gameState.player.position.x, gameState.player.position.y, 70);
     enemies.forEach(({ enemy }) => {
       damageEnemy(enemy, payload.stats.damage);
+      spawnImpactEffect(enemy.position, 'rgba(167,139,250,0.45)', 22);
     });
+    spawnImpactEffect(gameState.player.position, 'rgba(167,139,250,0.35)', 26);
   }
 }
 
@@ -232,6 +254,7 @@ function resolvePlayerSkill(skill) {
     case 'powerStrike':
       const enemies = findEnemiesInRange(skill.origin.x, skill.origin.y, skill.arc);
       enemies.forEach(({ enemy }) => damageEnemy(enemy, skill.damage));
+      spawnSwingEffect(skill.origin, skill.facing, skill.arc, Math.PI * 0.9);
       break;
     case 'rage':
       gameState.player.stats.damage *= skill.damageMult;
@@ -246,6 +269,7 @@ function resolvePlayerSkill(skill) {
       gameState.player.position.y += Math.sin(skill.facing) * skill.dash;
       const targetEnemies = findEnemiesInRange(gameState.player.position.x, gameState.player.position.y, 90);
       targetEnemies.forEach(({ enemy }) => damageEnemy(enemy, skill.damage));
+      spawnImpactEffect(gameState.player.position, 'rgba(99,102,241,0.45)', 28);
       break;
   }
 }
@@ -253,6 +277,16 @@ function resolvePlayerSkill(skill) {
 function updateProjectiles(dt) {
   const speedFactor = dt / 1000;
   gameState.projectiles.forEach(projectile => {
+    projectile.life = (projectile.life || 0) + dt;
+    projectile.rotation = Math.atan2(projectile.velocity?.y || 0, projectile.velocity?.x || 1);
+    projectile.scale = 1 + Math.sin((projectile.life || 0) / 160) * 0.08;
+    if (projectile.trailColor) {
+      projectile.trailTimer = (projectile.trailTimer || 0) - dt;
+      if (projectile.trailTimer <= 0) {
+        spawnTrailEffect(projectile.position, projectile.trailColor);
+        projectile.trailTimer = projectile.trailInterval || 70;
+      }
+    }
     projectile.position.x += projectile.velocity.x * speedFactor;
     projectile.position.y += projectile.velocity.y * speedFactor;
     if (projectile.owner === 'player') {
@@ -261,9 +295,11 @@ function updateProjectiles(dt) {
         if (Math.hypot(enemy.position.x - projectile.position.x, enemy.position.y - projectile.position.y) <= (projectile.radius + 12)) {
           damageEnemy(enemy, projectile.damage);
           projectile.remove = true;
+          spawnImpactEffect(projectile.position, 'rgba(255,255,255,0.4)', 18);
           if (projectile.explosion) {
             const affected = findEnemiesInRange(projectile.position.x, projectile.position.y, projectile.explosion.radius);
             affected.forEach(({ enemy: aoeEnemy }) => damageEnemy(aoeEnemy, projectile.damage * 0.75));
+            spawnImpactEffect(projectile.position, 'rgba(248,113,113,0.45)', projectile.explosion.radius * 0.6);
           }
         }
       });
@@ -272,6 +308,7 @@ function updateProjectiles(dt) {
       if (player && Math.hypot(player.position.x - projectile.position.x, player.position.y - projectile.position.y) <= (projectile.radius + 14)) {
         enemyStrike(projectile.source, player, 0);
         projectile.remove = true;
+        spawnImpactEffect(projectile.position, 'rgba(248,113,113,0.45)', 20);
       }
     }
     if (projectile.position.x < 0 || projectile.position.x > WORLD.width || projectile.position.y < 0 || projectile.position.y > WORLD.height) {
@@ -282,7 +319,28 @@ function updateProjectiles(dt) {
 }
 
 function spawnProjectile(data) {
-  gameState.projectiles.push({ ...data });
+  const projectile = {
+    ...data,
+    life: 0,
+    rotation: Math.atan2(data.velocity?.y || 0, data.velocity?.x || 1),
+    scale: 1,
+    trailTimer: data.trailInterval || 0
+  };
+  if (!projectile.radius) projectile.radius = 6;
+  if (projectile.type === 'arrow') {
+    projectile.trailColor = 'rgba(250,204,21,0.35)';
+    projectile.trailInterval = 55;
+  } else if (projectile.type === 'fireball') {
+    projectile.trailColor = 'rgba(248,113,113,0.35)';
+    projectile.trailInterval = 45;
+  } else if (projectile.type === 'orb') {
+    projectile.trailColor = 'rgba(129,140,248,0.4)';
+    projectile.trailInterval = 60;
+  } else if (projectile.type === 'enemy-bolt') {
+    projectile.trailColor = 'rgba(248,113,113,0.28)';
+    projectile.trailInterval = 80;
+  }
+  gameState.projectiles.push(projectile);
 }
 
 function spawnEnemyProjectile(enemy, dirX, dirY) {
@@ -298,15 +356,18 @@ function spawnEnemyProjectile(enemy, dirX, dirY) {
 }
 
 function enemyStrike(enemy, player, distance) {
-  if (!enemy) return;
-  const levelReduction = { 1: 0.8, 2: 0.85, 3: 0.9 };
+  if (!enemy || !player) return;
+  const levelReduction = { 1: 0.7, 2: 0.8, 3: 0.9 };
   const reduction = levelReduction[player.level] || 1;
   const amount = enemy.stats.damage * reduction;
   applyDamage(amount, enemy);
+  spawnImpactEffect(player.position, 'rgba(248,113,113,0.45)', 26);
 }
 
 function bossPhase(enemy, phase) {
   log(`Босс вошёл в фазу ${enemy.phase}`);
+  gameState.camera.flash = 220;
+  spawnImpactEffect(enemy.position, 'rgba(248,113,113,0.4)', 48);
 }
 
 function resolveCollisions() {
@@ -374,17 +435,19 @@ function renderInventory() {
   ui.invSlots.innerHTML = '';
   items.forEach((item, index) => {
     const slot = document.createElement('div');
-    slot.className = 'slot';
+    slot.className = `slot slot-${item.rarity}`;
     slot.dataset.index = index;
-    slot.innerHTML = `<span>${item.icon}</span><div class="rarity" style="background:${RARITY_COLORS[item.rarity]}"></div>`;
+    slot.innerHTML = `<span class="item-icon">${item.icon}</span><div class="rarity-dot" style="background:${RARITY_COLORS[item.rarity]}"></div>`;
     slot.addEventListener('click', () => equipFromInventory(index));
     slot.addEventListener('mouseenter', evt => showTooltip(item, evt));
     slot.addEventListener('mouseleave', hideTooltip);
     ui.invSlots.appendChild(slot);
   });
   ui.invCount.textContent = items.length;
-  ui.weaponSlot.innerHTML = equipment.weapon ? equipment.weapon.icon : '';
-  ui.armorSlot.innerHTML = equipment.armor ? equipment.armor.icon : '';
+  ui.weaponSlot.className = `slot equip-slot ${equipment.weapon ? 'slot-' + equipment.weapon.rarity : ''}`;
+  ui.weaponSlot.innerHTML = equipment.weapon ? `<span class="item-icon">${equipment.weapon.icon}</span>` : '';
+  ui.armorSlot.className = `slot equip-slot ${equipment.armor ? 'slot-' + equipment.armor.rarity : ''}`;
+  ui.armorSlot.innerHTML = equipment.armor ? `<span class="item-icon">${equipment.armor.icon}</span>` : '';
 }
 
 function equipFromInventory(index) {
@@ -398,11 +461,31 @@ function renderQuests() {
   ui.questList.innerHTML = '';
   getQuestData().forEach(quest => {
     const li = document.createElement('li');
-    const progress = quest.count ? Math.min(quest.progress, quest.count) : quest.progress;
-    const total = quest.count || '-';
-    li.innerHTML = `<strong>${quest.id}</strong> — ${quest.completed ? '✔️' : `${progress}/${total}`}`;
+    li.className = `quest ${quest.completed ? 'completed' : 'active'}`;
+    const target = quest.count ?? ((quest.type === 'boss' || quest.type === 'discover') ? 1 : null);
+    const current = target !== null ? Math.min(quest.progress, target) : quest.progress;
+    const progressText = quest.completed ? '✔️' : target !== null ? `${current}/${target}` : `${current}`;
+    const statusText = quest.completed ? 'Завершён' : 'Активен';
+    li.innerHTML = `
+      <div class="quest-header">
+        <span class="quest-title">${quest.name || quest.id}</span>
+        <span class="quest-status">${statusText}</span>
+      </div>
+      <div class="quest-meta">${ZONE_NAMES[quest.zone] || quest.zone}</div>
+      <div class="quest-progress">Прогресс: ${progressText}</div>
+      <div class="quest-reward">Награда: ${formatQuestReward(quest.reward)}</div>
+    `;
     ui.questList.appendChild(li);
   });
+}
+
+function formatQuestReward(reward = {}) {
+  const parts = [];
+  if (reward.xp) parts.push(`${reward.xp} XP`);
+  if (reward.gold) parts.push(`${reward.gold} золота`);
+  if (reward.item) parts.push(`${RARITY_NAMES[reward.item] || reward.item} предмет`);
+  if (reward.legendary) parts.push('Легендарный предмет');
+  return parts.length ? parts.join(' • ') : '—';
 }
 
 function flushLog() {
@@ -428,14 +511,60 @@ function loop(time) {
   requestAnimationFrame(loop);
 }
 
+function serializePlayer(player) {
+  if (!player) return null;
+  const clone = {
+    classId: player.classId,
+    race: player.race,
+    level: player.level,
+    xp: player.xp,
+    xpToNext: player.xpToNext,
+    stats: JSON.parse(JSON.stringify(player.stats)),
+    resources: JSON.parse(JSON.stringify(player.resources)),
+    derived: {
+      cooldown: player.derived.cooldown,
+      skillCooldown: player.derived.skillCooldown
+    },
+    position: { ...player.position },
+    specialization: player.specialization,
+    branches: Object.fromEntries(
+      Object.entries(player.branches || {}).map(([branchId, nodes]) => [branchId, Array.from(nodes || [])])
+    ),
+    talents: Array.from(player.talents || []),
+    effects: { aura: player.effects?.aura || null }
+  };
+  return clone;
+}
+
+function serializeStats(stats) {
+  return {
+    skillPoints: stats.skillPoints,
+    killCount: stats.killCount,
+    lootCount: stats.lootCount,
+    gold: stats.gold
+  };
+}
+
+function cloneItems(list) {
+  return (list || []).map(item => JSON.parse(JSON.stringify(item)));
+}
+
+function cloneEquipment(equipment) {
+  const clone = {};
+  Object.entries(equipment || {}).forEach(([slot, item]) => {
+    clone[slot] = item ? JSON.parse(JSON.stringify(item)) : null;
+  });
+  return clone;
+}
+
 function saveGame() {
   if (!gameState.player) return;
   const data = {
-    player: gameState.player,
-    enemies: [],
-    inventory: getInventoryData().items,
-    equipment: getInventoryData().equipment,
-    quests: getQuestData(),
+    player: serializePlayer(gameState.player),
+    inventory: cloneItems(getInventoryData().items),
+    equipment: cloneEquipment(getInventoryData().equipment),
+    quests: getQuestData().map(quest => JSON.parse(JSON.stringify(quest))),
+    stats: serializeStats(gameState.stats),
     zone: gameState.activeZone
   };
   localStorage.setItem('rpg-save', JSON.stringify(data));
@@ -449,16 +578,32 @@ function loadGame() {
   resetGameState();
   buildWorld();
   initQuests();
-  const player = createPlayer(data.player.classId, data.player.race);
-  Object.assign(player.stats, data.player.stats);
-  player.level = data.player.level;
-  player.xp = data.player.xp;
-  player.xpToNext = data.player.xpToNext;
-  player.position = data.player.position;
-  player.inventory = data.inventory || [];
-  player.equipment = data.equipment || {};
+  const savedPlayer = data.player;
+  const player = createPlayer(savedPlayer?.classId || 'ranger', savedPlayer?.race || 'human');
+  if (savedPlayer) {
+    Object.assign(player.stats, savedPlayer.stats || {});
+    Object.assign(player.resources, savedPlayer.resources || {});
+    player.level = savedPlayer.level || player.level;
+    player.xp = savedPlayer.xp || 0;
+    player.xpToNext = savedPlayer.xpToNext || player.xpToNext;
+    player.position = savedPlayer.position ? { ...savedPlayer.position } : player.position;
+    player.derived.cooldown = savedPlayer.derived?.cooldown || 0;
+    player.derived.skillCooldown = savedPlayer.derived?.skillCooldown || 0;
+    player.specialization = savedPlayer.specialization || player.specialization;
+    player.branches = {};
+    Object.entries(savedPlayer.branches || {}).forEach(([branchId, nodes]) => {
+      player.branches[branchId] = Array.isArray(nodes) ? [...nodes] : [];
+    });
+    player.talents = new Set(savedPlayer.talents || []);
+    player.effects = { ...(player.effects || {}), aura: savedPlayer.effects?.aura || null };
+  }
+  player.inventory = cloneItems(data.inventory);
+  player.equipment = cloneEquipment(data.equipment);
   if (data.quests) {
     gameState.quests = data.quests;
+  }
+  if (data.stats) {
+    gameState.stats = { ...gameState.stats, ...data.stats };
   }
   gameState.activeZone = data.zone || 'forest';
   spawnZoneEnemies(gameState.activeZone, 6);
@@ -510,6 +655,77 @@ function showTooltip(item, evt) {
 
 function hideTooltip() {
   ui.tooltip.style.display = 'none';
+}
+
+const SWING_COLORS = {
+  warrior: 'rgba(191,219,254,0.75)',
+  berserker: 'rgba(248,113,113,0.8)',
+  ranger: 'rgba(96,165,250,0.75)',
+  mage: 'rgba(129,140,248,0.75)',
+  assassin: 'rgba(196,181,253,0.8)'
+};
+
+function spawnSwingEffect(origin, angle, radius = 80, arc = Math.PI / 1.4) {
+  if (!origin) return;
+  const cls = gameState.player?.classId;
+  const color = SWING_COLORS[cls] || 'rgba(255,255,255,0.7)';
+  const thickness = cls === 'berserker' ? 14 : cls === 'warrior' ? 10 : cls === 'assassin' ? 7 : 9;
+  gameState.particles.push({
+    type: 'swing',
+    origin: { x: origin.x, y: origin.y },
+    angle,
+    radius,
+    arc,
+    color,
+    thickness,
+    life: 0,
+    ttl: WORLD.meleeSwingDuration,
+    layer: 'front'
+  });
+}
+
+function spawnImpactEffect(position, color, radius = 24) {
+  if (!position) return;
+  gameState.particles.push({
+    type: 'impact',
+    position: { x: position.x, y: position.y },
+    radius,
+    color,
+    life: 0,
+    ttl: 260,
+    layer: 'front'
+  });
+}
+
+function spawnTrailEffect(position, color) {
+  if (!position || !color) return;
+  gameState.particles.push({
+    type: 'trail',
+    position: { x: position.x, y: position.y },
+    color,
+    life: 0,
+    ttl: 200,
+    layer: 'front'
+  });
+}
+
+function updateParticles(dt) {
+  const player = gameState.player;
+  gameState.particles.forEach(effect => {
+    effect.life = (effect.life || 0) + dt;
+    if (!effect.triggered && effect.delay != null && effect.life >= effect.delay) {
+      effect.triggered = true;
+      if ((effect.type === 'aoe' || effect.type === 'meteor') && player) {
+        const dist = Math.hypot(player.position.x - effect.position.x, player.position.y - effect.position.y);
+        if (dist <= (effect.radius || 0) + 24) {
+          applyDamage(effect.damage || 20, effect.owner || null);
+          spawnImpactEffect(effect.position, effect.outline || effect.color || 'rgba(248,113,113,0.6)', effect.radius || 24);
+        }
+        gameState.camera.shake = Math.max(gameState.camera.shake, WORLD.hitShake + 4);
+      }
+    }
+  });
+  gameState.particles = gameState.particles.filter(effect => effect.life < (effect.ttl || 0));
 }
 
 window.addEventListener('load', init);

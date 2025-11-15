@@ -42,90 +42,187 @@ const PALETTE = {
 export function buildPlayerSprites() {
   const size = 32;
   Object.keys(PLAYER_CLASSES).forEach(cls => {
-    const frames = { idle: [], run: [], attack: [], death: [] };
-    const [body, accent] = PALETTE[cls];
-    for (let i = 0; i < 6; i++) {
-      const { canvas, ctx } = createFrame(size);
-      const bob = Math.sin((i / 6) * Math.PI * 2) * 2;
-      drawBaseBody(ctx, size, body, accent, bob, i, cls);
-      addNoise(ctx, size, body);
-      frames.run.push(canvas);
-    }
-    for (let i = 0; i < 4; i++) {
-      const { canvas, ctx } = createFrame(size);
-      drawBaseBody(ctx, size, body, accent, 0, i, cls);
-      if (i === 2) {
-        drawAttackAccent(ctx, cls, accent, size);
-      }
-      addNoise(ctx, size, body);
-      frames.attack.push(canvas);
-    }
-    for (let i = 0; i < 3; i++) {
-      const { canvas, ctx } = createFrame(size);
-      drawBaseBody(ctx, size, body, accent, i === 1 ? -1 : 0, i, cls);
-      if (i === 0) {
-        ctx.fillStyle = 'rgba(255,255,255,0.35)';
-        ctx.fillRect(6, 6, 20, 20);
-      }
-      ctx.globalAlpha = 1 - i * 0.35;
-      addNoise(ctx, size, body);
-      frames.death.push(canvas);
-    }
-    const idleFrame = createFrame(size);
-    drawBaseBody(idleFrame.ctx, size, body, accent, 0, 0, cls);
-    addNoise(idleFrame.ctx, size, body);
-    frames.idle.push(idleFrame.canvas);
-    spriteAtlas[cls] = frames;
+    spriteAtlas[cls] = {
+      idle: buildAnimationFrames(cls, 'idle', size, 4),
+      walk: buildAnimationFrames(cls, 'walk', size, 6),
+      attack: buildAnimationFrames(cls, 'attack', size, 5),
+      death: buildAnimationFrames(cls, 'death', size, 5)
+    };
   });
 }
 
-function drawBaseBody(ctx, size, body, accent, bob, frame, cls) {
+function buildAnimationFrames(cls, animation, size, length) {
+  const frames = [];
+  for (let i = 0; i < length; i++) {
+    const { canvas, ctx } = createFrame(size);
+    drawPlayerFrame(ctx, cls, animation, i, size);
+    frames.push(canvas);
+  }
+  return frames;
+}
+
+function drawPlayerFrame(ctx, cls, animation, frame, size) {
+  const [body, accent] = PALETTE[cls];
   ctx.clearRect(0, 0, size, size);
-  ctx.fillStyle = 'rgba(15,23,42,0.8)';
+  // Shadow
+  ctx.fillStyle = 'rgba(15,23,42,0.75)';
   ctx.fillRect(6, 26, 20, 4);
+  const bob = animation === 'idle'
+    ? Math.sin((frame / 4) * Math.PI * 2) * 1.5
+    : animation === 'walk'
+      ? Math.sin((frame / 6) * Math.PI * 2) * 2
+      : animation === 'attack'
+        ? Math.sin((frame / 5) * Math.PI) * 1.8
+        : 0;
+
+  const sway = animation === 'walk' ? Math.cos((frame / 6) * Math.PI * 2) * 2 : 0;
+  drawTorso(ctx, body, accent, bob, sway);
+  drawLimbs(ctx, cls, body, accent, animation, frame, bob, sway);
+  drawEquipment(ctx, cls, animation, frame, accent, body, size);
+  if (animation === 'death') {
+    ctx.globalAlpha = Math.max(0, 1 - frame * 0.22);
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+    ctx.fillRect(0, 0, size, size);
+  }
+  addNoise(ctx, size, body);
+}
+
+function drawTorso(ctx, body, accent, bob, sway) {
+  ctx.save();
+  ctx.translate(sway * 0.2, bob * 0.2);
   ctx.fillStyle = body;
-  ctx.fillRect(10, 14 + bob, 12, 10);
-  ctx.fillRect(8, 10 + bob, 16, 6);
+  ctx.fillRect(11, 10 + bob, 10, 12);
   ctx.fillRect(10, 8 + bob, 12, 4);
   ctx.fillRect(12, 6 + bob, 8, 4);
+  ctx.fillStyle = lighten(body, -40);
+  ctx.fillRect(12, 20 + bob, 4, 8);
+  ctx.fillRect(16, 20 + bob, 4, 8);
   ctx.fillStyle = accent;
-  ctx.fillRect(13, 4 + bob, 6, 4);
-  ctx.fillRect(14, 2 + bob, 4, 3);
-  // arms
-  ctx.fillRect(6, 12 + bob, 6, 6);
-  ctx.fillRect(20, 12 + bob, 6, 6);
-  if (cls === 'ranger') {
-    ctx.fillRect(4, 8 + bob, 4, 14);
-    ctx.fillRect(3, 10 + bob, 2, 10);
-  } else if (cls === 'mage') {
-    ctx.fillRect(22, 7 + bob, 4, 12);
-    ctx.fillRect(24, 8 + bob + (frame % 2), 3, 6);
-  } else if (cls === 'assassin') {
-    ctx.fillRect(4, 8 + bob, 4, 8);
-    ctx.fillRect(24, 8 + bob, 4, 8);
-  } else if (cls === 'berserker') {
-    ctx.fillRect(4, 8 + bob, 6, 10);
-    ctx.fillRect(22, 9 + bob, 6, 8);
-  } else {
-    ctx.fillRect(22, 12 + bob, 5, 8);
+  ctx.fillRect(13, 6 + bob, 6, 5);
+  ctx.fillRect(14, 4 + bob, 4, 3);
+  ctx.restore();
+}
+
+function drawLimbs(ctx, cls, body, accent, animation, frame, bob, sway) {
+  ctx.save();
+  const legSwing = animation === 'walk' ? Math.sin((frame / 6) * Math.PI * 2) * 3 : 0;
+  const armSwing = animation === 'walk' ? Math.cos((frame / 6) * Math.PI * 2) * 3 : 0;
+
+  // legs
+  ctx.fillStyle = lighten(body, -50);
+  ctx.fillRect(10 + legSwing * 0.2, 22 + bob, 4, 8);
+  ctx.fillRect(16 - legSwing * 0.2, 22 + bob, 4, 8);
+
+  ctx.fillStyle = lighten(body, -30);
+  ctx.fillRect(8 + armSwing * 0.2, 12 + bob, 4, 6);
+  ctx.fillRect(20 - armSwing * 0.2, 12 + bob, 4, 6);
+
+  if (animation === 'attack') {
+    ctx.fillStyle = accent;
+    if (cls === 'warrior' || cls === 'berserker') {
+      ctx.fillRect(6, 12 + bob, 6, 6);
+      ctx.fillRect(20, 12 + bob, 6, 6);
+    } else if (cls === 'ranger') {
+      ctx.fillRect(5, 10 + bob, 4, 10);
+      ctx.fillRect(22, 10 + bob, 4, 10);
+    } else if (cls === 'mage') {
+      ctx.fillRect(22, 8 + bob, 5, 12);
+      ctx.fillRect(6, 9 + bob, 5, 12);
+    } else if (cls === 'assassin') {
+      ctx.fillRect(5, 10 + bob, 4, 9);
+      ctx.fillRect(21, 9 + bob, 4, 10);
+    }
+  }
+  ctx.restore();
+}
+
+function drawEquipment(ctx, cls, animation, frame, accent, body, size) {
+  if (animation === 'attack') {
+    switch (cls) {
+      case 'warrior':
+        drawBladeSwing(ctx, frame, '#f1f5f9', accent, 18, 12);
+        break;
+      case 'berserker':
+        drawBladeSwing(ctx, frame, '#fee2e2', '#ef4444', 20, 14);
+        break;
+      case 'ranger':
+        drawBowAttack(ctx, frame, accent, body);
+        break;
+      case 'mage':
+        drawStaffCast(ctx, frame, accent, size);
+        break;
+      case 'assassin':
+        drawAssassinStrike(ctx, frame, accent);
+        break;
+    }
+  } else if (animation === 'death') {
+    ctx.fillStyle = 'rgba(148,163,184,0.4)';
+    ctx.fillRect(6 + frame, 18 + frame * 1.5, 20 - frame * 2, 6);
   }
 }
 
-function drawAttackAccent(ctx, cls, accent, size) {
+function drawBladeSwing(ctx, frame, bladeColor, trailColor, radius, thickness) {
+  ctx.save();
+  ctx.translate(16, 16);
+  const progress = frame / 4;
+  ctx.rotate(-Math.PI / 2 + progress * Math.PI * 1.2);
+  ctx.strokeStyle = trailColor;
+  ctx.lineWidth = thickness;
+  ctx.globalAlpha = 0.35 + progress * 0.3;
+  ctx.beginPath();
+  ctx.arc(0, 0, radius, -Math.PI / 4, Math.PI / 4);
+  ctx.stroke();
+  ctx.strokeStyle = bladeColor;
+  ctx.lineWidth = thickness - 6;
+  ctx.globalAlpha = 0.9;
+  ctx.beginPath();
+  ctx.arc(0, 0, radius - 4, -Math.PI / 6, Math.PI / 3);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawBowAttack(ctx, frame, accent, body) {
   ctx.fillStyle = accent;
-  if (cls === 'ranger') {
-    ctx.fillRect(2, 8, 6, 16);
-  } else if (cls === 'mage') {
-    ctx.fillStyle = 'rgba(148,163,255,0.6)';
-    ctx.beginPath();
-    ctx.arc(size - 8, 12, 6, 0, Math.PI * 2);
-    ctx.fill();
-  } else if (cls === 'warrior' || cls === 'berserker') {
-    ctx.fillRect(4, 10, 26, 4);
-  } else if (cls === 'assassin') {
-    ctx.fillRect(4, 10, 6, 3);
-    ctx.fillRect(22, 10, 6, 3);
-  }
+  ctx.fillRect(8, 8, 3, 16);
+  ctx.fillRect(21, 8, 3, 16);
+  ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+  ctx.beginPath();
+  ctx.moveTo(9, 8);
+  ctx.lineTo(9 + frame * 1.4, 16);
+  ctx.lineTo(9, 24);
+  ctx.stroke();
+  ctx.fillStyle = lighten(body, 40);
+  ctx.fillRect(8 + frame, 15, 10, 2);
+  ctx.fillStyle = '#facc15';
+  ctx.fillRect(16 + frame, 15, 6, 2);
+}
+
+function drawStaffCast(ctx, frame, accent, size) {
+  ctx.fillStyle = accent;
+  ctx.fillRect(22, 6, 3, 20);
+  ctx.fillRect(7, 8, 3, 12);
+  ctx.fillStyle = 'rgba(148,163,255,0.7)';
+  const radius = 5 + frame;
+  ctx.beginPath();
+  ctx.arc(size - 6 - frame, 8 + frame * 0.6, radius, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawAssassinStrike(ctx, frame, accent) {
+  ctx.save();
+  ctx.translate(16, 16);
+  ctx.rotate(-Math.PI / 3 + frame * 0.3);
+  ctx.fillStyle = accent;
+  ctx.fillRect(-16, -3, 14, 3);
+  ctx.rotate(Math.PI / 1.5);
+  ctx.fillRect(-16, -3, 14, 3);
+  ctx.restore();
+  ctx.strokeStyle = 'rgba(124,58,237,0.4)';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(6, 8 + frame);
+  ctx.lineTo(24, 12 + frame * 0.6);
+  ctx.stroke();
 }
 
 export function createPlayer(classId, race = 'human') {
@@ -183,6 +280,10 @@ export function createPlayer(classId, race = 'human') {
 export function updatePlayer(dt, callbacks) {
   const player = gameState.player;
   if (!player) return;
+  if (player.state === 'dead') {
+    advanceAnimation(player, dt);
+    return;
+  }
   const input = gameState.input;
   const accel = 0.0015 * player.stats.moveSpeed;
   const vx = (input.keys['KeyD'] || input.keys['ArrowRight'] ? 1 : 0) - (input.keys['KeyA'] || input.keys['ArrowLeft'] ? 1 : 0);
@@ -200,7 +301,7 @@ export function updatePlayer(dt, callbacks) {
   player.position.x = Math.max(0, Math.min(WORLD.width, player.position.x + player.velocity.x * dt * 0.06));
   player.position.y = Math.max(0, Math.min(WORLD.height, player.position.y + player.velocity.y * dt * 0.06));
   if (speed > 0.1) {
-    player.state = 'run';
+    player.state = 'walk';
   } else {
     player.state = 'idle';
   }
@@ -237,15 +338,26 @@ export function updatePlayer(dt, callbacks) {
 function advanceAnimation(player, dt) {
   const sprites = player.sprites;
   if (!sprites) return;
+  const previous = player.animation.name;
+  if (!['attack', 'death'].includes(player.animation.name)) {
+    player.animation.name = player.state;
+  }
+  if (player.animation.name !== previous) {
+    player.animation.frame = 0;
+    player.animation.timer = 0;
+  }
   player.animation.timer += dt;
   const sequence = sprites[player.animation.name] || sprites[player.state] || sprites.idle;
-  const frameDuration = player.animation.name === 'attack' ? 90 : 120;
+  const frameDuration = player.animation.name === 'attack' ? 90 : player.animation.name === 'death' ? 160 : 120;
   if (player.animation.timer >= frameDuration) {
     player.animation.timer = 0;
     player.animation.frame = (player.animation.frame + 1) % sequence.length;
     if (player.animation.name === 'attack' && player.animation.frame === sequence.length - 1) {
       player.animation.name = 'idle';
       player.animation.frame = 0;
+    }
+    if (player.animation.name === 'death' && player.animation.frame === sequence.length - 1) {
+      player.animation.frame = sequence.length - 1;
     }
   }
 }
@@ -361,6 +473,7 @@ export function applyDamage(amount, source) {
   if (player.stats.hp <= 0) {
     player.stats.hp = 0;
     player.state = 'dead';
+    player.animation = { name: 'death', frame: 0, timer: 0 };
   }
 }
 

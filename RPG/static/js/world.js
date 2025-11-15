@@ -193,10 +193,49 @@ function computeVariants(tiles) {
   const width = tiles[0].length;
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
-      const tile = tiles[y][x];
-      tile.variant = neighborMask(tiles, x, y, tile.type);
+      tiles[y][x].variant = buildVariant(tiles, x, y);
     }
   }
+}
+
+function buildVariant(tiles, x, y) {
+  const type = tiles[y][x].type;
+  const cardinals = {
+    top: tiles[y - 1]?.[x] || null,
+    right: tiles[y]?.[x + 1] || null,
+    bottom: tiles[y + 1]?.[x] || null,
+    left: tiles[y]?.[x - 1] || null
+  };
+  const diagonals = {
+    topLeft: tiles[y - 1]?.[x - 1] || null,
+    topRight: tiles[y - 1]?.[x + 1] || null,
+    bottomRight: tiles[y + 1]?.[x + 1] || null,
+    bottomLeft: tiles[y + 1]?.[x - 1] || null
+  };
+  const edges = {};
+  Object.entries(cardinals).forEach(([dir, tile]) => {
+    edges[dir] = !tile || tile.type !== type;
+  });
+  const corners = {
+    topLeft: edges.top && edges.left && (!diagonals.topLeft || diagonals.topLeft.type !== type),
+    topRight: edges.top && edges.right && (!diagonals.topRight || diagonals.topRight.type !== type),
+    bottomRight: edges.bottom && edges.right && (!diagonals.bottomRight || diagonals.bottomRight.type !== type),
+    bottomLeft: edges.bottom && edges.left && (!diagonals.bottomLeft || diagonals.bottomLeft.type !== type)
+  };
+  const adjacent = new Set();
+  Object.values(cardinals).forEach(tile => {
+    if (tile && tile.type !== type) adjacent.add(tile.type);
+  });
+  Object.values(diagonals).forEach(tile => {
+    if (tile && tile.type !== type) adjacent.add(tile.type);
+  });
+  return {
+    mask: neighborMask(tiles, x, y, type),
+    edges,
+    corners,
+    adjacent: Array.from(adjacent),
+    neighbors: Object.fromEntries(Object.entries(cardinals).map(([dir, tile]) => [dir, tile?.type || null]))
+  };
 }
 
 function neighborMask(tiles, x, y, type) {

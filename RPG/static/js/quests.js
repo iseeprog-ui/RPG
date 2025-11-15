@@ -7,7 +7,8 @@ export function initQuests() {
     ...template,
     progress: 0,
     completed: false,
-    claimed: false
+    claimed: false,
+    status: 'active'
   }));
 }
 
@@ -22,6 +23,7 @@ export function updateQuest(type, target, amount = 1) {
       quest.progress += amount;
       if ((quest.count && quest.progress >= quest.count) || quest.type === 'boss') {
         quest.completed = true;
+        quest.status = 'completed';
         grantQuestRewards(quest);
       }
     }

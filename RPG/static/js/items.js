@@ -1,4 +1,4 @@
-import { BASE_ITEMS, CLASS_LEGENDARIES, LOOT_TABLE, RARITY_COLORS, RARITIES, UI_STRINGS } from './constants.js';
+import { BASE_ITEMS, CLASS_LEGENDARIES, LOOT_TABLE, PLAYER_CLASSES, RARITY_COLORS, RARITIES, UI_STRINGS } from './constants.js';
 import { gameState } from './state.js';
 import { applyEquipmentBonuses, resetEquipmentBonuses, setAura } from './player.js';
 
@@ -7,6 +7,14 @@ let tooltipRefs = null;
 export function setupTooltip(refs) {
   tooltipRefs = refs;
 }
+
+const RARITY_LABELS = {
+  common: 'Обычный',
+  uncommon: 'Необычный',
+  rare: 'Редкий',
+  epic: 'Эпический',
+  legendary: 'Легендарный'
+};
 
 export function dropLoot(enemy) {
   const item = rollItem(enemy);
@@ -59,6 +67,8 @@ function pickRarity() {
 }
 
 function makeItem(base) {
+  const allowed = base.allowedClasses || base.allowed || base.requires || base.legendary?.requires || null;
+  const requiredClass = base.requiredClass || base.legendary?.requiredClass || (Array.isArray(allowed) && allowed.length === 1 ? allowed[0] : null);
   return {
     id: `${base.name}-${Math.random().toString(36).slice(2)}`,
     icon: base.icon,
@@ -67,7 +77,9 @@ function makeItem(base) {
     rarity: base.rarity,
     stats: base.stats || {},
     legendary: base.legendary || null,
-    tooltip: base.tooltip || ''
+    tooltip: base.tooltip || '',
+    allowedClasses: Array.isArray(allowed) ? allowed : allowed ? [allowed] : null,
+    requiredClass
   };
 }
 
@@ -85,16 +97,17 @@ export function addToInventory(item) {
 export function equipItem(item) {
   const player = gameState.player;
   if (!player) return false;
-  if (item.legendary?.requires && !item.legendary.requires.includes(player.classId)) {
+  const allowed = item.allowedClasses || (item.requiredClass ? [item.requiredClass] : null);
+  if (allowed && !allowed.includes(player.classId)) {
     gameState.ui.log.push(UI_STRINGS.wrongClass);
     addToInventory(item);
     return false;
   }
+  player.equipment[item.slot] = item;
+  applyEquipmentBonuses(item.stats || {});
   if (item.legendary && item.legendary.bonuses) {
     applyEquipmentBonuses(item.legendary.bonuses);
   }
-  player.equipment[item.slot] = item;
-  applyEquipmentBonuses(item.stats || {});
   return true;
 }
 
@@ -132,15 +145,21 @@ export function toggleLootFilter(rarity) {
 
 export function buildTooltip(item) {
   if (!item) return '';
-  const stats = Object.entries(item.stats || {})
-    .map(([key, value]) => `${statLabel(key)}: ${formatStat(value)}`)
-    .join('<br/>');
-  const legendary = item.legendary?.bonuses
-    ? `<div class="legendary">${Object.entries(item.legendary.bonuses)
-        .map(([k, v]) => `${statLabel(k)}: ${formatStat(v)}`)
-        .join('<br/>')}</div>`
-    : '';
-  return `<strong style="color:${RARITY_COLORS[item.rarity]}">${item.name}</strong><br/>${stats}${legendary}`;
+  const rarityText = RARITY_LABELS[item.rarity] || item.rarity;
+  const requirementLine = buildRequirementLine(item);
+  const baseStats = formatStatsBlock(item.stats);
+  const legendaryBlock = buildLegendaryBlock(item);
+  const comparison = buildComparisonBlock(item);
+  return `
+    <div class="item-name rarity-${item.rarity}">${item.icon} ${item.name}</div>
+    <div class="item-rarity-line">${rarityText}</div>
+    ${requirementLine}
+    <div class="item-section">
+      ${baseStats || '<div class="item-stat muted">Бонусов нет</div>'}
+    </div>
+    ${legendaryBlock}
+    ${comparison}
+  `;
 }
 
 function statLabel(key) {
@@ -158,18 +177,90 @@ function statLabel(key) {
     fireDamage: 'Огонь',
     bossDamage: 'Урон по боссам',
     stealthDuration: 'Длительность стелса',
-    dashDistance: 'Рывок'
+    dashDistance: 'Рывок',
+    rageDuration: 'Длительность ярости',
+    block: 'Блок',
+    damageMult: 'Множитель урона',
+    pierce: 'Пробитие'
   };
   return map[key] || key;
 }
 
 function formatStat(value) {
   if (typeof value === 'number') {
-    if (Math.abs(value) < 1) return `${Math.round(value * 100)}%`;
-    return value > 0 ? `+${value}` : `${value}`;
+    if (Math.abs(value) < 1) {
+      const percent = Math.round(value * 100);
+      if (percent === 0) return '0%';
+      return `${value > 0 ? '+' : ''}${percent}%`;
+    }
+    const rounded = Math.round(value * 100) / 100;
+    return value > 0 ? `+${rounded}` : `${rounded}`;
   }
   if (typeof value === 'boolean') return value ? 'Да' : 'Нет';
   return value;
+}
+
+function formatStatsBlock(stats = {}) {
+  const entries = Object.entries(stats || {}).filter(([, value]) => value !== undefined && value !== null);
+  if (!entries.length) return '';
+  return entries
+    .map(([key, value]) => `<div class="item-stat"><span>${statLabel(key)}</span><span>${formatStat(value)}</span></div>`)
+    .join('');
+}
+
+function buildLegendaryBlock(item) {
+  if (!item.legendary) return '';
+  const bonuses = formatStatsBlock(item.legendary.bonuses);
+  const description = item.legendary.description ? `<div class="legendary-desc">${item.legendary.description}</div>` : '';
+  return `<div class="item-section legendary-block"><div class="legendary-title">Особые свойства</div>${bonuses || '<div class="item-stat muted">Особых бонусов нет</div>'}${description}</div>`;
+}
+
+function buildRequirementLine(item) {
+  const player = gameState.player;
+  const allowed = item.allowedClasses || (item.requiredClass ? [item.requiredClass] : null);
+  if (!allowed || !allowed.length) return '';
+  const labels = allowed.map(classLabel).join(', ');
+  const matches = player ? allowed.includes(player.classId) : false;
+  const cls = matches ? 'item-requirement ok' : 'item-requirement fail';
+  return `<div class="${cls}">Класс: ${labels}</div>`;
+}
+
+function buildComparisonBlock(item) {
+  const player = gameState.player;
+  if (!player) return '';
+  const equipped = player.equipment?.[item.slot];
+  if (!equipped || equipped.id === item.id) return '';
+  const nextStats = aggregateStats(item);
+  const currentStats = aggregateStats(equipped);
+  const keys = new Set([...Object.keys(nextStats), ...Object.keys(currentStats)]);
+  if (!keys.size) return '';
+  const rows = [];
+  keys.forEach(key => {
+    const diff = (nextStats[key] || 0) - (currentStats[key] || 0);
+    if (Math.abs(diff) < 0.001) return;
+    const cls = diff > 0 ? 'item-compare better' : 'item-compare worse';
+    rows.push(`<div class="${cls}"><span>${statLabel(key)}</span><span>${formatStat(diff)}</span></div>`);
+  });
+  if (!rows.length) rows.push('<div class="item-compare neutral">Без изменений</div>');
+  return `<div class="item-section compare-block"><div class="compare-title">Сравнение</div>${rows.join('')}</div>`;
+}
+
+function aggregateStats(item) {
+  const result = {};
+  const merge = stats => {
+    Object.entries(stats || {}).forEach(([key, value]) => {
+      if (typeof value === 'number') {
+        result[key] = (result[key] || 0) + value;
+      }
+    });
+  };
+  merge(item.stats);
+  if (item.legendary?.bonuses) merge(item.legendary.bonuses);
+  return result;
+}
+
+function classLabel(classId) {
+  return PLAYER_CLASSES[classId]?.label || classId;
 }
 
 export function getInventoryData() {
