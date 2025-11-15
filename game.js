@@ -134,6 +134,11 @@
             return;
         }
 
+        if (key === "h" && !event.repeat) {
+            usePotionHotkey();
+            return;
+        }
+
         keysPressed.add(key);
     }
 
@@ -489,11 +494,24 @@
         ctx.lineWidth = 1;
         ctx.strokeRect(x, y, barWidth, barHeight);
 
+        const xpBarY = y + barHeight + 12;
+        const xpRatio = player.expToNextLevel > 0 ? player.exp / player.expToNextLevel : 0;
+
+        ctx.fillStyle = "#222222";
+        ctx.fillRect(x, xpBarY, barWidth, barHeight);
+
+        ctx.fillStyle = "#4d7cff";
+        ctx.fillRect(x, xpBarY, Math.min(1, Math.max(0, xpRatio)) * barWidth, barHeight);
+
+        ctx.strokeStyle = "#ffffff";
+        ctx.strokeRect(x, xpBarY, barWidth, barHeight);
+
         ctx.fillStyle = "#ffffff";
         ctx.font = "12px sans-serif";
-        ctx.fillText(`HP: ${Math.ceil(player.hp)} / ${player.maxHp}`, x, y + barHeight + 14);
-        ctx.fillText(`Lvl ${player.level}  EXP: ${player.exp} / ${player.expToNextLevel}`, x, y + barHeight + 28);
-        ctx.fillText("[I] Inventory", x, y + barHeight + 42);
+        const textStartY = xpBarY + barHeight + 14;
+        ctx.fillText(`HP: ${Math.ceil(player.hp)} / ${player.maxHp}`, x, textStartY);
+        ctx.fillText(`Lvl ${player.level}  EXP: ${player.exp} / ${player.expToNextLevel}`, x, textStartY + 14);
+        ctx.fillText("[I] Inventory  [H] Use Potion", x, textStartY + 28);
     }
 
     function drawInventoryPanel() {
@@ -518,7 +536,7 @@
         ctx.fillText("Inventory", panelX + 16, panelY + 22);
 
         ctx.font = "12px sans-serif";
-        ctx.fillText("Click items to use/equip", panelX + 16, panelY + headerHeight + 8);
+        ctx.fillText("Click items to use/equip. H uses potion.", panelX + 16, panelY + headerHeight + 8);
 
         const slotSize = 44;
         const padding = 16;
@@ -644,6 +662,14 @@
             item.equipped = !item.equipped;
             refreshPlayerStats();
         }
+    }
+
+    function usePotionHotkey() {
+        const potionIndex = inventory.findIndex((item) => item.type === "potion");
+        if (potionIndex === -1) {
+            return;
+        }
+        activateInventoryItem(inventory[potionIndex], potionIndex);
     }
 
     function calculateEquipmentBonuses() {
