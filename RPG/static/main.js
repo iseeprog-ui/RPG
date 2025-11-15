@@ -7,6 +7,10 @@ const WORLD_HEIGHT = 2400;
 
 const TILE_SIZE = 32;
 let tileMap = [];
+let tileSprites = {};
+
+let spriteEffects = [];
+let deadEnemiesQueue = [];
 
 // камера — всегда смотрит в центр на игрока
 let camera = { x: 0, y: 0 };
@@ -71,6 +75,14 @@ const CLASS_SPRITES = {
   assassin: '🗡️'
 };
 
+const CLASS_LABELS = {
+  warrior: 'Воин',
+  berserker: 'Берсерк',
+  ranger: 'Стрелок',
+  mage: 'Маг',
+  assassin: 'Ассасин'
+};
+
 const ENEMY_SPRITES = {
   brute: '👹',
   archer: '🏹',
@@ -88,6 +100,114 @@ const ITEM_SPRITES = {
   armor: '🛡️'
 };
 
+const CLASS_LEGENDARIES = {
+  ranger: () => makeItem(
+    'bow',
+    'Лук сумеречного ястреба',
+    'weapon',
+    { dmg: 20, range: 160 },
+    1,
+    'legendary',
+    'Лёгкий лук, выкованный из лунного дерева. Усиливает град стрел.',
+    {
+      requiresClass: ['ranger'],
+      skillBoost: {
+        id: 'multiShot',
+        extraProjectiles: 2,
+        spread: 14,
+        desc: 'Добавляет две стрелы и сужает конус выстрела.'
+      },
+      aura: { inner: 'rgba(96,165,250,0.55)', outer: 'rgba(30,64,175,0.25)' }
+    }
+  ),
+  mage: () => makeItem(
+    'staff',
+    'Посох астрального шепота',
+    'weapon',
+    { dmg: 18, range: 80 },
+    1,
+    'legendary',
+    'Собирает космический пепел, расширяя радиус огненного шара.',
+    {
+      requiresClass: ['mage'],
+      skillBoost: {
+        id: 'fireball',
+        dmgMult: 1.45,
+        extraRadius: 30,
+        extraRange: 60,
+        desc: 'Огненный шар взрывается мощнее и летит дальше.'
+      },
+      aura: { inner: 'rgba(192,132,252,0.55)', outer: 'rgba(76,29,149,0.25)' }
+    }
+  ),
+  warrior: () => makeItem(
+    'sword',
+    'Клинок рассветного легиона',
+    'weapon',
+    { dmg: 22, speed: 0.18 },
+    1,
+    'legendary',
+    'Меч легендарного рыцаря. Удар по дуге становится шире.',
+    {
+      requiresClass: ['warrior'],
+      skillBoost: {
+        id: 'powerStrike',
+        dmgMult: 1.45,
+        arcMult: 1.35,
+        extraRange: 30,
+        desc: 'Усиливает мощный удар и расширяет дугу атаки.'
+      },
+      aura: { inner: 'rgba(248,250,252,0.6)', outer: 'rgba(59,130,246,0.25)' }
+    }
+  ),
+  berserker: () => makeItem(
+    'axe',
+    'Громовой разрубатель',
+    'weapon',
+    { dmg: 28, speed: 0.1 },
+    1,
+    'legendary',
+    'Громыхающий топор, подпитывающий бурю ярости.',
+    {
+      requiresClass: ['berserker'],
+      skillBoost: {
+        id: 'rage',
+        durationMult: 1.8,
+        desc: 'Ярость длится почти вдвое дольше.'
+      },
+      aura: { inner: 'rgba(248,113,113,0.55)', outer: 'rgba(185,28,28,0.25)' }
+    }
+  ),
+  assassin: () => makeItem(
+    'daggers',
+    'Клинки парящего призрака',
+    'weapon',
+    { dmg: 19, speed: 0.28 },
+    1,
+    'legendary',
+    'Эфирные клинки, оставляющие шлейф тени.',
+    {
+      requiresClass: ['assassin'],
+      skillBoost: {
+        id: 'shadowStep',
+        durationMult: 1.8,
+        mpReduce: 8,
+        desc: 'Шаг в тени становится длиннее и дешевле.'
+      },
+      aura: { inner: 'rgba(167,139,250,0.55)', outer: 'rgba(91,33,182,0.25)' }
+    }
+  )
+};
+
+const COMMON_LOOT = [
+  () => makeItem('potion', 'Большое зелье лечения', 'consumable', { heal: 80 }, 1, 'rare', 'Сильно восстанавливает здоровье.'),
+  () => makeItem('armor', 'Усиленный нагрудник', 'armor', { hp: 40 }, 1, 'rare', 'Укреплённая броня странника.'),
+  () => makeItem('sword', 'Отточенный клинок', 'weapon', { dmg: 12, speed: 0.1 }, 1, 'uncommon', 'Быстрый меч для ловких бойцов.'),
+  () => makeItem('staff', 'Кристальный фокус', 'weapon', { dmg: 14, range: 40 }, 1, 'rare', 'Фокусирует ману для дальних атак.'),
+  () => makeItem('bow', 'Жало пустошей', 'weapon', { dmg: 13, range: 90 }, 1, 'rare', 'Лёгкий лук, пробивающий броню.'),
+  () => makeItem('daggers', 'Тени рассвета', 'weapon', { dmg: 11, speed: 0.22 }, 1, 'rare', 'Лёгкие клинки для скрытности.')
+];
+
 const PLAYER_COLORS = {
   warrior: ['#f97316', '#fed7aa'],
   berserker: ['#f43f5e', '#fecaca'],
@@ -98,62 +218,96 @@ const PLAYER_COLORS = {
 
 let playerSprites = {};
 let enemySprites = {};
+let enemyDeathSprites = {};
+let enemySpawnSprites = {};
+
+function adjustColor(hex, amt) {
+  const col = hex.replace('#', '');
+  const num = parseInt(col, 16);
+  let r = (num >> 16) + amt;
+  let g = ((num >> 8) & 0xff) + amt;
+  let b = (num & 0xff) + amt;
+  r = Math.max(0, Math.min(255, r));
+  g = Math.max(0, Math.min(255, g));
+  b = Math.max(0, Math.min(255, b));
+  return '#' + (r << 16 | g << 8 | b).toString(16).padStart(6, '0');
+}
+
+function addPixelNoise(ctx, size, baseColor, density = 0.1) {
+  const brighter = adjustColor(baseColor, 30);
+  const darker = adjustColor(baseColor, -40);
+  const count = Math.floor(size * size * density * 0.3);
+  for (let i = 0; i < count; i++) {
+    const x = Math.floor(Math.random() * size);
+    const y = Math.floor(Math.random() * size);
+    ctx.fillStyle = (i % 2 === 0) ? brighter : darker;
+    ctx.fillRect(x, y, 1, 1);
+  }
+}
 
 function buildPlayerSprites() {
-  const size = 16;
+  const size = 18;
+  const frames = 6;
+  const shadowColor = 'rgba(15,23,42,0.8)';
   Object.keys(PLAYER_COLORS).forEach(cls => {
-    const colors = PLAYER_COLORS[cls];
-    const body = colors[0];
-    const accent = colors[1];
+    const [body, accent] = PLAYER_COLORS[cls];
     playerSprites[cls] = [];
-    for (let f = 0; f < 4; f++) {
+    for (let f = 0; f < frames; f++) {
       const c = document.createElement('canvas');
       c.width = size;
       c.height = size;
       const g = c.getContext('2d');
       g.imageSmoothingEnabled = false;
-
-      // фон прозрачный
       g.clearRect(0, 0, size, size);
 
-      // тень под ногами
-      g.fillStyle = 'rgba(15,23,42,0.8)';
-      g.fillRect(3, 13, 10, 2);
+      const step = Math.sin((f / frames) * Math.PI * 2);
+      const bob = Math.round(Math.sin((f / frames) * Math.PI * 2) * 1.2);
 
-      // ноги (анимация шага)
+      // shadow
+      g.fillStyle = shadowColor;
+      g.fillRect(4, 14, 10, 2);
+
+      // legs
       g.fillStyle = body;
-      if (f % 2 === 0) {
-        // правая нога вперёд
-        g.fillRect(4, 10, 3, 3);
-        g.fillRect(9, 11, 3, 2);
+      if (step > 0) {
+        g.fillRect(4, 10 + bob, 4, 4);
+        g.fillRect(10, 11 - bob, 3, 4);
       } else {
-        // левая нога вперёд
-        g.fillRect(4, 11, 3, 2);
-        g.fillRect(9, 10, 3, 3);
+        g.fillRect(4, 11 - bob, 3, 4);
+        g.fillRect(9, 10 + bob, 4, 4);
       }
 
-      // торс
-      g.fillRect(4, 5, 8, 5);
+      // torso
+      g.fillRect(4, 6 + bob, 10, 5);
 
-      // голова
+      // shoulders / arms flicker slightly
+      g.fillRect(2, 7 + bob, 3, 3);
+      g.fillRect(11, 7 + bob, 3, 3);
+
+      // head
       g.fillStyle = accent;
-      g.fillRect(5, 2, 6, 3);
+      g.fillRect(6, 2 + bob, 6, 3);
+      g.fillRect(7, 1 + bob, 4, 2);
 
-      // "оружие" как акцент сбоку
+      // class accents / weapons
       g.fillStyle = accent;
       if (cls === 'ranger') {
-        g.fillRect(1, 5, 2, 6);
+        g.fillRect(1, 6 + bob, 2, 7);
+        g.fillRect(0, 7 + bob, 1, 5);
       } else if (cls === 'mage') {
-        g.fillRect(12, 3, 2, 6);
+        g.fillRect(14, 4 + bob, 2, 7);
+        g.fillRect(13, 5 + bob + (f % 2), 1, 4);
       } else if (cls === 'assassin') {
-        g.fillRect(2, 4, 2, 4);
-        g.fillRect(12, 4, 2, 4);
+        g.fillRect(1, 5 + bob, 2, 4);
+        g.fillRect(15, 5 + bob, 2, 4);
       } else if (cls === 'berserker') {
-        g.fillRect(1, 4, 3, 3);
-      } else { // warrior
-        g.fillRect(12, 5, 3, 3);
+        g.fillRect(1, 5 + bob, 3, 5);
+        g.fillRect(13, 6 + bob, 3, 4);
+      } else {
+        g.fillRect(13, 7 + bob, 3, 4);
       }
 
+      addPixelNoise(g, size, body, 0.12);
       playerSprites[cls].push(c);
     }
   });
@@ -294,50 +448,267 @@ const QUEST_DEFS = [
 
 
 function buildEnemySprites() {
-  const size = 16;
-  const types = ['brute','archer','shaman','boss'];
-  types.forEach(type => {
+  const frames = 6;
+  const palettes = {
+    brute:  { body: '#ef4444', accent: '#fee2e2' },
+    archer: { body: '#22c55e', accent: '#bbf7d0' },
+    shaman: { body: '#a855f7', accent: '#e9d5ff' },
+    boss:   { body: '#f97316', accent: '#fed7aa' }
+  };
+
+  Object.entries(palettes).forEach(([type, palette]) => {
+    const size = type === 'boss' ? 24 : 18;
     enemySprites[type] = [];
-    for (let f = 0; f < 4; f++) {
+    for (let f = 0; f < frames; f++) {
       const c = document.createElement('canvas');
       c.width = size;
       c.height = size;
       const g = c.getContext('2d');
       g.imageSmoothingEnabled = false;
-      g.clearRect(0,0,size,size);
+      g.clearRect(0, 0, size, size);
 
-      g.fillStyle = 'rgba(15,23,42,0.8)';
-      g.fillRect(3,13,10,2);
+      const bob = Math.round(Math.sin((f / frames) * Math.PI * 2) * (type === 'boss' ? 1.5 : 1));
+      const sway = Math.round(Math.cos((f / frames) * Math.PI * 2));
 
-      let body = '#ef4444';
-      let accent = '#fee2e2';
-      if (type === 'archer') { body = '#22c55e'; accent = '#bbf7d0'; }
-      if (type === 'shaman') { body = '#a855f7'; accent = '#e9d5ff'; }
-      if (type === 'boss') { body = '#f97316'; accent = '#fed7aa'; }
+      const shadowW = type === 'boss' ? size - 6 : size - 8;
+      g.fillStyle = 'rgba(15,23,42,0.75)';
+      g.fillRect(Math.floor((size - shadowW) / 2), size - 4, shadowW, 3);
 
-      g.fillStyle = body;
-      if (f % 2 === 0) {
-        g.fillRect(4,10,3,3);
-        g.fillRect(9,11,3,2);
-      } else {
-        g.fillRect(4,11,3,2);
-        g.fillRect(9,10,3,3);
+      // torso
+      g.fillStyle = palette.body;
+      const bodyW = type === 'boss' ? 14 : 9;
+      const bodyH = type === 'boss' ? 10 : 7;
+      g.fillRect(Math.floor((size - bodyW) / 2) + sway, 6 + bob, bodyW, bodyH);
+
+      // head / mask
+      g.fillStyle = palette.accent;
+      const headW = bodyW - 4;
+      g.fillRect(Math.floor((size - headW) / 2) + sway, 3 + bob, headW, 4);
+
+      // arms / details
+      g.fillStyle = adjustColor(palette.body, -30);
+      g.fillRect(Math.floor((size - bodyW) / 2) + sway - 2, 8 + bob, 2, bodyH - 2);
+      g.fillRect(Math.floor((size + bodyW) / 2) + sway, 8 + bob, 2, bodyH - 2);
+
+      if (type === 'archer') {
+        g.fillStyle = palette.accent;
+        g.fillRect(Math.floor(size / 2) + sway - 6, 6 + bob, 10, 2);
+      } else if (type === 'shaman') {
+        g.fillStyle = palette.accent;
+        g.fillRect(Math.floor((size - bodyW) / 2) + sway - 3, 4 + bob, 3, 6);
+        g.fillRect(Math.floor((size + bodyW) / 2) + sway, 4 + bob, 3, 6);
+      } else if (type === 'boss') {
+        g.fillStyle = adjustColor(palette.accent, 20);
+        g.fillRect(Math.floor((size - bodyW) / 2) + sway - 3, 5 + bob, 3, 6);
+        g.fillRect(Math.floor((size + bodyW) / 2) + sway, 5 + bob, 3, 6);
+        g.fillStyle = palette.accent;
+        g.fillRect(Math.floor(size / 2) + sway - 2, 2 + bob, 4, 3);
       }
 
-      g.fillRect(4,5,8,5);
-
-      g.fillStyle = accent;
-      g.fillRect(5,2,6,3);
-
-      g.fillStyle = accent;
-      if (type === 'archer') g.fillRect(1,5,2,6);
-      else if (type === 'shaman') g.fillRect(12,3,2,6);
-      else if (type === 'boss') { g.fillRect(1,4,3,3); g.fillRect(12,4,3,3); }
-      else g.fillRect(2,5,3,3);
-
+      addPixelNoise(g, size, palette.body, 0.18);
       enemySprites[type].push(c);
     }
+
+    enemyDeathSprites[type] = createEnemyDeathFrames(type, palette);
   });
+
+  enemySpawnSprites.generic = createSpawnFrames(20, '#60a5fa', '#c4b5fd');
+  enemySpawnSprites.boss = createSpawnFrames(30, '#facc15', '#fde68a');
+}
+
+function createEnemyDeathFrames(type, palette) {
+  const frames = [];
+  const count = type === 'boss' ? 8 : 6;
+  const size = type === 'boss' ? 26 : 20;
+  for (let i = 0; i < count; i++) {
+    const c = document.createElement('canvas');
+    c.width = size;
+    c.height = size;
+    const g = c.getContext('2d');
+    g.imageSmoothingEnabled = false;
+    g.clearRect(0, 0, size, size);
+
+    const scale = 1 - i / count;
+    const bodySize = Math.max(4, Math.floor((size - 6) * scale));
+    const offset = Math.floor((size - bodySize) / 2);
+    g.globalAlpha = Math.max(0.2, scale);
+    g.fillStyle = palette.body;
+    g.fillRect(offset, offset, bodySize, bodySize);
+
+    g.globalAlpha = Math.max(0.1, scale - 0.2);
+    g.fillStyle = palette.accent;
+    g.fillRect(offset + 1, offset + 1, Math.max(2, bodySize - 2), Math.max(2, bodySize - 2));
+
+    g.globalAlpha = 1;
+    g.fillStyle = adjustColor(palette.accent, 40);
+    for (let s = 0; s < 4; s++) {
+      const angle = (i + s) / count * Math.PI * 2;
+      const px = Math.floor(size / 2 + Math.cos(angle) * (i + 1));
+      const py = Math.floor(size / 2 + Math.sin(angle) * (i + 1));
+      g.fillRect(px, py, 1, 1);
+    }
+
+    frames.push(c);
+  }
+  return frames;
+}
+
+function createSpawnFrames(size, innerColor, outerColor) {
+  const frames = [];
+  const count = 8;
+  for (let i = 0; i < count; i++) {
+    const c = document.createElement('canvas');
+    c.width = size;
+    c.height = size;
+    const g = c.getContext('2d');
+    g.imageSmoothingEnabled = false;
+    g.clearRect(0, 0, size, size);
+
+    const radius = (i + 1) / count * (size / 2);
+    g.globalAlpha = 0.25 + i / count * 0.4;
+    g.fillStyle = innerColor;
+    g.beginPath();
+    g.arc(size / 2, size / 2, radius, 0, Math.PI * 2);
+    g.fill();
+
+    g.globalAlpha = 1;
+    g.strokeStyle = outerColor;
+    g.lineWidth = 2;
+    g.beginPath();
+    g.arc(size / 2, size / 2, radius, 0, Math.PI * 2);
+    g.stroke();
+
+    g.strokeStyle = innerColor;
+    g.lineWidth = 1;
+    g.beginPath();
+    g.moveTo(size / 2 - radius, size / 2);
+    g.lineTo(size / 2 + radius, size / 2);
+    g.moveTo(size / 2, size / 2 - radius);
+    g.lineTo(size / 2, size / 2 + radius);
+    g.stroke();
+
+    frames.push(c);
+  }
+  return frames;
+}
+
+const TILE_MASK_DIRS = [
+  { dx: 0, dy: -1, bit: 1 },
+  { dx: 1, dy: -1, bit: 2 },
+  { dx: 1, dy: 0, bit: 4 },
+  { dx: 1, dy: 1, bit: 8 },
+  { dx: 0, dy: 1, bit: 16 },
+  { dx: -1, dy: 1, bit: 32 },
+  { dx: -1, dy: 0, bit: 64 },
+  { dx: -1, dy: -1, bit: 128 }
+];
+
+function buildTileSprites() {
+  tileSprites.grass = createGrassTiles();
+  tileSprites.water = createAutoTileSet({
+    base: '#1d4ed8',
+    edge: '#1e3a8a',
+    highlight: '#60a5fa',
+    corner: '#93c5fd',
+    noise: 0.22,
+    isWater: true
+  });
+  tileSprites.road = createAutoTileSet({
+    base: '#57534e',
+    edge: '#3f3f46',
+    highlight: '#a16207',
+    corner: '#fde68a',
+    noise: 0.16
+  });
+}
+
+function createGrassTiles() {
+  const variants = [];
+  const count = 4;
+  for (let i = 0; i < count; i++) {
+    const c = document.createElement('canvas');
+    c.width = TILE_SIZE;
+    c.height = TILE_SIZE;
+    const g = c.getContext('2d');
+    g.imageSmoothingEnabled = false;
+    g.clearRect(0, 0, TILE_SIZE, TILE_SIZE);
+
+    g.fillStyle = '#14532d';
+    g.fillRect(0, 0, TILE_SIZE, TILE_SIZE);
+    g.fillStyle = '#166534';
+    g.fillRect(0, 0, TILE_SIZE, TILE_SIZE);
+
+    addPixelNoise(g, TILE_SIZE, '#166534', 0.4);
+    addPixelNoise(g, TILE_SIZE, '#0f5132', 0.25);
+
+    g.fillStyle = 'rgba(34,197,94,0.08)';
+    g.fillRect(0, 0, TILE_SIZE, TILE_SIZE);
+
+    // subtle tufts
+    g.fillStyle = '#22c55e';
+    for (let t = 0; t < 3; t++) {
+      g.fillRect(4 + t * 4 + (i % 2), 6 + ((t + i) % 3), 2, 4);
+    }
+
+    variants.push(c);
+  }
+  return variants;
+}
+
+function createAutoTileSet({ base, edge, highlight, corner, noise = 0.18, isWater = false }) {
+  const tiles = new Array(256);
+  for (let mask = 0; mask < 256; mask++) {
+    const c = document.createElement('canvas');
+    c.width = TILE_SIZE;
+    c.height = TILE_SIZE;
+    const g = c.getContext('2d');
+    g.imageSmoothingEnabled = false;
+    g.clearRect(0, 0, TILE_SIZE, TILE_SIZE);
+
+    g.fillStyle = base;
+    g.fillRect(0, 0, TILE_SIZE, TILE_SIZE);
+    addPixelNoise(g, TILE_SIZE, base, noise);
+
+    const hasN = !!(mask & 1);
+    const hasNE = !!(mask & 2);
+    const hasE = !!(mask & 4);
+    const hasSE = !!(mask & 8);
+    const hasS = !!(mask & 16);
+    const hasSW = !!(mask & 32);
+    const hasW = !!(mask & 64);
+    const hasNW = !!(mask & 128);
+
+    g.fillStyle = edge;
+    if (!hasN) g.fillRect(0, 0, TILE_SIZE, 6);
+    if (!hasS) g.fillRect(0, TILE_SIZE - 6, TILE_SIZE, 6);
+    if (!hasE) g.fillRect(TILE_SIZE - 6, 0, 6, TILE_SIZE);
+    if (!hasW) g.fillRect(0, 0, 6, TILE_SIZE);
+
+    g.fillStyle = corner;
+    if (!hasN && !hasW) g.fillRect(0, 0, 6, 6);
+    if (!hasN && !hasE) g.fillRect(TILE_SIZE - 6, 0, 6, 6);
+    if (!hasS && !hasW) g.fillRect(0, TILE_SIZE - 6, 6, 6);
+    if (!hasS && !hasE) g.fillRect(TILE_SIZE - 6, TILE_SIZE - 6, 6, 6);
+
+    // inner corners when diagonals missing but adjacent present
+    g.fillStyle = highlight;
+    if (hasN && hasW && !hasNW) g.fillRect(0, 0, 6, 6);
+    if (hasN && hasE && !hasNE) g.fillRect(TILE_SIZE - 6, 0, 6, 6);
+    if (hasS && hasW && !hasSW) g.fillRect(0, TILE_SIZE - 6, 6, 6);
+    if (hasS && hasE && !hasSE) g.fillRect(TILE_SIZE - 6, TILE_SIZE - 6, 6, 6);
+
+    if (isWater) {
+      g.globalAlpha = 0.25;
+      g.fillStyle = highlight;
+      g.beginPath();
+      g.arc(TILE_SIZE / 2, TILE_SIZE / 2, TILE_SIZE / 2 - 4, 0, Math.PI * 2);
+      g.fill();
+      g.globalAlpha = 1;
+    }
+
+    tiles[mask] = c;
+  }
+  return tiles;
 }
 
 // === INIT ===
@@ -500,7 +871,8 @@ function startGame(cls, race) {
     buffs: {},
     lastAttack: 0,
     dodgeCooldown: 0,
-    invincibility: 0
+    invincibility: 0,
+    skillBonuses: {}
   };
 
   killCount = 0;
@@ -572,6 +944,115 @@ function findZone(id) {
   return ZONES.find(z => z.id === id);
 }
 
+function buildTileMap() {
+  buildTileSprites();
+  const cols = Math.ceil(WORLD_WIDTH / TILE_SIZE);
+  const rows = Math.ceil(WORLD_HEIGHT / TILE_SIZE);
+  tileMap = Array.from({ length: rows }, () => Array(cols));
+
+  const grassVariants = tileSprites.grass.length;
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      tileMap[y][x] = {
+        type: 'grass',
+        mask: 0,
+        variant: Math.floor(Math.random() * grassVariants),
+        shoreMask: 0
+      };
+    }
+  }
+
+  const lakeZone = ZONES.find(z => z.id === 'lake');
+  const lakeCenter = lakeZone ? lakeZone.spawn : { x: WORLD_WIDTH * 0.5, y: WORLD_HEIGHT * 0.4 };
+  const lakeRadiusX = 240;
+  const lakeRadiusY = 180;
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      const worldX = x * TILE_SIZE + TILE_SIZE / 2;
+      const worldY = y * TILE_SIZE + TILE_SIZE / 2;
+      const nx = (worldX - lakeCenter.x) / lakeRadiusX;
+      const ny = (worldY - lakeCenter.y) / lakeRadiusY;
+      if (nx * nx + ny * ny <= 1.05) {
+        tileMap[y][x].type = 'water';
+      }
+    }
+  }
+
+  const ruinsZone = ZONES.find(z => z.id === 'ruins');
+  const forestZone = ZONES[0];
+  if (forestZone && lakeZone) carveRoad(forestZone.spawn, lakeZone.spawn, 1.6);
+  if (lakeZone && ruinsZone) carveRoad(lakeZone.spawn, ruinsZone.spawn, 1.8);
+
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      const tile = tileMap[y][x];
+      if (tile.type !== 'grass') {
+        tile.mask = computeTileMask(x, y, tile.type);
+        tile.variant = tile.mask;
+      }
+      tile.shoreMask = computeNeighborMask(x, y, 'water');
+    }
+  }
+}
+
+function carveRoad(from, to, radiusTiles = 1.4) {
+  const steps = Math.max(16, Math.floor(Math.hypot(to.x - from.x, to.y - from.y) / TILE_SIZE));
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const px = from.x + (to.x - from.x) * t;
+    const py = from.y + (to.y - from.y) * t;
+    paintRoadAt(px, py, radiusTiles);
+  }
+}
+
+function paintRoadAt(px, py, radiusTiles) {
+  const cols = tileMap[0].length;
+  const rows = tileMap.length;
+  const centerX = Math.floor(px / TILE_SIZE);
+  const centerY = Math.floor(py / TILE_SIZE);
+  const radius = Math.ceil(radiusTiles) + 1;
+  for (let y = centerY - radius; y <= centerY + radius; y++) {
+    if (y < 0 || y >= rows) continue;
+    for (let x = centerX - radius; x <= centerX + radius; x++) {
+      if (x < 0 || x >= cols) continue;
+      const worldX = x * TILE_SIZE + TILE_SIZE / 2;
+      const worldY = y * TILE_SIZE + TILE_SIZE / 2;
+      const dist = Math.hypot(worldX - px, worldY - py);
+      if (dist <= radiusTiles * TILE_SIZE) {
+        if (tileMap[y][x].type !== 'water') {
+          tileMap[y][x].type = 'road';
+        }
+      }
+    }
+  }
+}
+
+function computeTileMask(x, y, type) {
+  let mask = 0;
+  TILE_MASK_DIRS.forEach(dir => {
+    const nx = x + dir.dx;
+    const ny = y + dir.dy;
+    const neighbor = tileMap[ny]?.[nx];
+    if (neighbor && neighbor.type === type) {
+      mask |= dir.bit;
+    }
+  });
+  return mask;
+}
+
+function computeNeighborMask(x, y, type) {
+  let mask = 0;
+  TILE_MASK_DIRS.forEach(dir => {
+    const nx = x + dir.dx;
+    const ny = y + dir.dy;
+    const neighbor = tileMap[ny]?.[nx];
+    if (neighbor && neighbor.type === type) {
+      mask |= dir.bit;
+    }
+  });
+  return mask;
+}
+
 // === GAME LOOP ===
 let lastTime = 0;
 function gameLoop(time) {
@@ -583,7 +1064,9 @@ function gameLoop(time) {
     updatePlayer(dt);
     updateEnemies(dt);
     updateProjectiles(dt);
+    processDeadEnemies();
     updateParticles(dt);
+    updateSpriteEffects(dt);
     updateCamera();
     checkCollisions();
     updateUIBars();
@@ -598,6 +1081,12 @@ function updatePlayer(dt) {
   if (!player) return;
   const move = { x: 0, y: 0 };
   let speed = player.speed;
+
+  Object.values(player.skills || {}).forEach(skill => {
+    if (skill && skill.cd > 0) {
+      skill.cd = Math.max(0, skill.cd - dt);
+    }
+  });
 
   if (player.buffs.rage) speed *= 1.3;
   if (keys['w'] || keys['arrowup']) move.y -= 1;
@@ -748,33 +1237,40 @@ function useSkill() {
   if (!skillId) return;
   const meta = SKILLS[skillId];
   const s = player.skills[skillId];
-  if (s.cd > 0 || player.mp < meta.mp) return;
+  const bonus = player.skillBonuses?.[skillId] || {};
+  const mpCost = Math.max(0, meta.mp - (bonus.mpReduce || 0));
+  if (s.cd > 0 || player.mp < mpCost) return;
 
   const worldMouse = screenToWorld(mouse.x, mouse.y);
   const dx = worldMouse.x - player.x;
   const dy = worldMouse.y - player.y;
   const angle = Math.atan2(dy, dx);
 
-  player.mp -= meta.mp;
-  s.cd = meta.cd / 1000;
+  player.mp -= mpCost;
+  s.cd = (meta.cd / 1000) * (bonus.cdMult || 1);
 
   if (skillId === 'fireball') {
-    const mult = player.spec?.id === 'pyromancer' ? 1.4 : 1;
+    const mult = (player.spec?.id === 'pyromancer' ? 1.4 : 1) * (bonus.dmgMult || 1);
+    const radius = 60 + (bonus.extraRadius || 0);
+    const speed = 520 * (bonus.speedMult || 1);
     projectiles.push({
       x: player.x, y: player.y,
-      vx: Math.cos(angle) * 520,
-      vy: Math.sin(angle) * 520,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
       dmg: (player.baseDmg + 10) * mult,
-      range: 380,
+      range: 380 + (bonus.extraRange || 0),
       traveled: 0,
       owner: 'player',
       kind: 'fireball',
-      radius: 60
+      radius
     });
   } else if (skillId === 'multiShot') {
-    const spread = 18 * Math.PI/180;
-    for (let i = -1; i <= 1; i++) {
-      const a = angle + i*spread;
+    const spread = (bonus.spread || 18) * Math.PI/180;
+    const extra = bonus.extraProjectiles || 0;
+    const total = 3 + extra;
+    const offset = (total - 1) / 2;
+    for (let i = 0; i < total; i++) {
+      const a = angle + (i - offset) * spread;
       projectiles.push({
         x: player.x, y: player.y,
         vx: Math.cos(a) * 900,
@@ -787,10 +1283,12 @@ function useSkill() {
       });
     }
   } else if (skillId === 'rage') {
-    player.buffs.rage = (player.spec?.id === 'frenzy') ? 9 : 6;
+    const base = (player.spec?.id === 'frenzy') ? 9 : 6;
+    player.buffs.rage = base * (bonus.durationMult || 1);
   } else if (skillId === 'shadowStep') {
-    player.invincibility = 1.2;
-    player.buffs.shadow = 1.2;
+    const duration = 1.2 * (bonus.durationMult || 1);
+    player.invincibility = duration;
+    player.buffs.shadow = duration;
     createCircleWave(player.x, player.y, 120, '#6b21a8');
   } else if (skillId === 'powerStrike') {
     // усиленный удар по дуге
@@ -798,7 +1296,8 @@ function useSkill() {
     const dx2 = worldMouse2.x - player.x;
     const dy2 = worldMouse2.y - player.y;
     const angle2 = Math.atan2(dy2, dx2);
-    const dmg = (player.baseDmg + 8) * 1.8;
+    const dmg = (player.baseDmg + 8) * 1.8 * (bonus.dmgMult || 1);
+    const arcWidth = (Math.PI / 3) * (bonus.arcMult || 1);
     enemies.forEach(e => {
       const ex = e.x - player.x;
       const ey = e.y - player.y;
@@ -806,12 +1305,12 @@ function useSkill() {
       if (d < player.baseRange + 40) {
         const ang = Math.atan2(ey, ex);
         const diff = Math.abs(normalizeAngle(ang - angle2));
-        if (diff < Math.PI / 3) {
+        if (diff < arcWidth) {
           hitEnemy(e, dmg);
         }
       }
     });
-    createSlashArc(player.x, player.y, angle2, player.baseRange + 40, '#facc15');
+    createSlashArc(player.x, player.y, angle2, player.baseRange + 40 + (bonus.extraRange || 0), '#facc15');
   }
 }
 
@@ -822,6 +1321,7 @@ function spawnEnemiesForZone(zone, count) {
     if (type === 'boss' && enemies.some(e => e.type === 'boss')) continue;
     const e = makeEnemy(type, zone);
     enemies.push(e);
+    triggerEnemySpawnEffect(e);
   }
 }
 
@@ -851,6 +1351,7 @@ function updateEnemies(dt) {
   if (!player) return;
 
   enemies.forEach(e => {
+    if (e.dead) return;
     const dx = player.x - e.x;
     const dy = player.y - e.y;
     const dist = Math.hypot(dx, dy);
@@ -944,8 +1445,12 @@ function enemyShoot(e, dirX, dirY) {
 
 // попадание по врагу
 function hitEnemy(e, dmg) {
+  if (!e || e.dead) return;
   e.hp -= dmg;
   createParticles(e.x, e.y, '#f97316', 10);
+  if (e.hp <= 0) {
+    queueEnemyDeath(e);
+  }
 }
 
 // === PROJECTILES ===
@@ -972,11 +1477,6 @@ function updateProjectiles(dt) {
               if (d2 < (p.radius || 60)) hitEnemy(e2, dmg * 0.6);
             });
             createCircleWave(e.x, e.y, p.radius || 60, '#f97316');
-          }
-
-          if (e.hp <= 0) {
-            onEnemyKilled(e);
-            enemies.splice(i, 1);
           }
           return false;
         }
@@ -1029,6 +1529,64 @@ function onEnemyKilled(e) {
   }
 }
 
+function createLegendaryForClass(cls) {
+  const factory = CLASS_LEGENDARIES[cls];
+  if (!factory) return null;
+  return factory();
+}
+
+function dropLoot(enemy) {
+  const jitter = () => (Math.random() - 0.5) * 40;
+  if (enemy.type === 'boss') {
+    const mainLegendary = createLegendaryForClass(player?.class);
+    if (mainLegendary) {
+      dropWorldItem(mainLegendary, enemy.x, enemy.y - 18);
+    }
+    // шанс дополнительного легендарного предмета другой специализации
+    if (Math.random() < 0.4) {
+      const pool = Object.keys(CLASS_LEGENDARIES).filter(c => c !== player?.class);
+      const extraCls = pool[Math.floor(Math.random() * pool.length)];
+      const extraLegendary = createLegendaryForClass(extraCls);
+      if (extraLegendary) {
+        dropWorldItem(extraLegendary, enemy.x + jitter(), enemy.y + jitter());
+      }
+    }
+    // бонусные зелья
+    dropWorldItem(makeItem('potion', 'Эликсир победы', 'consumable', { heal: 120 }, 1, 'rare', 'Подарок за победу над боссом.'), enemy.x + jitter(), enemy.y + jitter());
+  } else if (Math.random() < 0.45) {
+    const generator = COMMON_LOOT[Math.floor(Math.random() * COMMON_LOOT.length)];
+    const item = generator && generator();
+    if (item) {
+      dropWorldItem(item, enemy.x + jitter(), enemy.y + jitter());
+    }
+    if (Math.random() < 0.12 && player) {
+      const aspirant = createLegendaryForClass(player.class);
+      if (aspirant) {
+        aspirant.rarity = 'epic';
+        aspirant.name = 'Осколок ' + aspirant.name;
+        dropWorldItem(aspirant, enemy.x + jitter(), enemy.y + jitter());
+      }
+    }
+  }
+}
+
+function dropWorldItem(item, x, y) {
+  const worldItem = { ...item, x, y };
+  items.push(worldItem);
+  if (item.rarity === 'legendary' || item.aura) {
+    spriteEffects.push({
+      type: 'aura',
+      x,
+      y,
+      radius: 40,
+      inner: item.aura?.inner || 'rgba(253,186,116,0.4)',
+      outer: item.aura?.outer || 'rgba(245,158,11,0.18)',
+      duration: 0.9,
+      layer: 'under'
+    });
+  }
+}
+
 // === PARTICLES ===
 function createParticles(x, y, color, count) {
   for (let i = 0; i < count; i++) {
@@ -1046,13 +1604,91 @@ function createParticles(x, y, color, count) {
 
 function updateParticles(dt) {
   particles = particles.filter(p => {
-    p.x += p.vx * dt;
-    p.y += p.vy * dt;
+    if (p.arc || p.circle) {
+      p.life -= dt;
+      return p.life > 0;
+    }
+    const vx = p.vx || 0;
+    const vy = p.vy || 0;
+    p.x += vx * dt;
+    p.y += vy * dt;
     p.life -= dt;
-    p.vx *= 0.9;
-    p.vy *= 0.9;
+    p.vx = vx * 0.9;
+    p.vy = vy * 0.9;
     return p.life > 0;
   });
+}
+
+function updateSpriteEffects(dt) {
+  spriteEffects = spriteEffects.filter(effect => {
+    if (effect.frames) {
+      effect.frameTimer = (effect.frameTimer || 0) + dt;
+      while (effect.frameTimer >= (effect.frameDuration || 0.08)) {
+        effect.frameTimer -= (effect.frameDuration || 0.08);
+        effect.frame = (effect.frame || 0) + 1;
+      }
+      if ((effect.frame || 0) >= effect.frames.length) {
+        return false;
+      }
+    }
+    if (effect.duration) {
+      effect.elapsed = (effect.elapsed || 0) + dt;
+      if (effect.elapsed >= effect.duration) {
+        return false;
+      }
+    }
+    return true;
+  });
+}
+
+function queueEnemyDeath(enemy) {
+  if (!enemy || enemy.dead) return;
+  enemy.dead = true;
+  deadEnemiesQueue.push(enemy);
+  spawnEnemyDeathEffect(enemy);
+}
+
+function spawnEnemyDeathEffect(enemy) {
+  const frames = enemyDeathSprites[enemy.type];
+  if (frames && frames.length) {
+    spriteEffects.push({
+      type: 'death',
+      frames,
+      frame: 0,
+      frameDuration: enemy.type === 'boss' ? 0.1 : 0.08,
+      x: enemy.x,
+      y: enemy.y,
+      size: enemy.type === 'boss' ? 74 : 40,
+      layer: 'over'
+    });
+  } else {
+    createParticles(enemy.x, enemy.y, '#fca5a5', 14);
+  }
+}
+
+function triggerEnemySpawnEffect(enemy) {
+  const frames = enemySpawnSprites[enemy.type === 'boss' ? 'boss' : 'generic'];
+  if (frames && frames.length) {
+    spriteEffects.push({
+      type: 'spawn',
+      frames,
+      frame: 0,
+      frameDuration: enemy.type === 'boss' ? 0.08 : 0.06,
+      x: enemy.x,
+      y: enemy.y,
+      size: enemy.type === 'boss' ? 96 : 48,
+      layer: 'under'
+    });
+  } else {
+    createCircleWave(enemy.x, enemy.y, enemy.type === 'boss' ? 100 : 50, '#60a5fa');
+  }
+}
+
+function processDeadEnemies() {
+  if (!deadEnemiesQueue.length) return;
+  deadEnemiesQueue.forEach(en => onEnemyKilled(en));
+  enemies = enemies.filter(en => !en.dead);
+  deadEnemiesQueue.length = 0;
 }
 
 // красивые эффекты
@@ -1099,7 +1735,10 @@ function checkCollisions() {
     const it = items[i];
     const d = Math.hypot(it.x - player.x, it.y - player.y);
     if (d < 40) {
-      addToInventory(it);
+      const invItem = { ...it };
+      delete invItem.x;
+      delete invItem.y;
+      addToInventory(invItem);
       lootCount++;
       updateQuestProgress('loot', 1);
       items.splice(i,1);
@@ -1113,8 +1752,20 @@ function checkCollisions() {
 }
 
 // === ITEMS & INVENTORY ===
-function makeItem(iconKey, name, slot, stats = {}, qty = 1, rarity = 'common', desc = '') {
-  return { iconKey, name, slot, stats, qty, rarity, desc, id: Math.random().toString(36).slice(2) };
+function makeItem(iconKey, name, slot, stats = {}, qty = 1, rarity = 'common', desc = '', options = {}) {
+  return {
+    iconKey,
+    name,
+    slot,
+    stats,
+    qty,
+    rarity,
+    desc,
+    id: Math.random().toString(36).slice(2),
+    requiresClass: options.requiresClass || null,
+    skillBoost: options.skillBoost || null,
+    aura: options.aura || null
+  };
 }
 
 function addToInventory(item) {
@@ -1156,6 +1807,10 @@ function onInventoryClick(index) {
     log(`Вы использовали: ${item.name}`, 'info');
   } else if (item.slot === 'weapon' || item.slot === 'armor') {
     const slotName = item.slot;
+    if (item.requiresClass && !item.requiresClass.includes(player.class)) {
+      log(`Этот предмет предназначен для: ${item.requiresClass.map(r => CLASS_LABELS[r] || r).join(', ')}`, 'dmg');
+      return;
+    }
     // swap
     const currently = player.equipment[slotName];
     player.equipment[slotName] = item;
@@ -1169,14 +1824,22 @@ function onInventoryClick(index) {
 
 function recalcStats() {
   if (!player) return;
-  const weapon = player.equipment.weapon?.stats || {};
-  const armor = player.equipment.armor?.stats || {};
+  const weaponItem = player.equipment.weapon;
+  const armorItem = player.equipment.armor;
+  const weapon = weaponItem?.stats || {};
+  const armor = armorItem?.stats || {};
 
   const cls = CLASSES[player.class];
   player.baseDmg = cls.dmg + (weapon.dmg || 0);
   player.baseRange = cls.range + (weapon.range || 0);
   player.maxHp = cls.hp + (armor.hp || 0);
   if (player.hp > player.maxHp) player.hp = player.maxHp;
+  player.attackCooldown = Math.max(180, cls.attackCooldown * (1 - (weapon.speed || 0)));
+
+  player.skillBonuses = {};
+  if (weaponItem?.skillBoost) {
+    player.skillBonuses[weaponItem.skillBoost.id] = weaponItem.skillBoost;
+  }
 }
 
 function updateInventoryUI() {
@@ -1349,6 +2012,8 @@ function loadGame() {
   killCount = data.killCount || 0;
   lootCount = data.lootCount || 0;
   skillPoints = data.skillPoints || 0;
+  player.skillBonuses = {};
+  recalcStats();
 
   enemies = [];
   items = [];
@@ -1379,6 +2044,14 @@ function showItemTooltip(item, clientX, clientY) {
     if (item.stats.hp) statsLines.push('HP: +' + item.stats.hp);
   } else if (item.slot === 'consumable') {
     if (item.stats.heal) statsLines.push('Лечение: +' + item.stats.heal + ' HP');
+  }
+  if (item.requiresClass) {
+    statsLines.push('Класс: ' + item.requiresClass.map(r => CLASS_LABELS[r] || r).join(', '));
+  }
+  if (item.skillBoost) {
+    const skillName = SKILLS[item.skillBoost.id]?.name || item.skillBoost.id;
+    const boostText = item.skillBoost.desc || 'Усиленный навык';
+    statsLines.push(`${skillName}: ${boostText}`);
   }
   tooltipEl.innerHTML = `
     <div class="item-name ${rarityClass}">${item.name}</div>
@@ -1461,13 +2134,8 @@ function render() {
   ctx.save();
   ctx.translate(-camera.x + canvas.width/2, -camera.y + canvas.height/2);
 
+  renderTileLayer();
   // зона фон
-  if (activeZone) {
-    ctx.fillStyle = activeZone.color;
-    ctx.fillRect(0,0,WORLD_WIDTH,WORLD_HEIGHT);
-  }
-
-  // детали окружения (очень простые)
   drawEnvironment();
 
   // порталы
@@ -1488,15 +2156,27 @@ function render() {
 
   // предметы
   items.forEach(it => {
+    if (it.rarity === 'legendary' || it.aura) {
+      const inner = it.aura?.inner || 'rgba(253,186,116,0.5)';
+      const outer = it.aura?.outer || 'rgba(245,158,11,0.2)';
+      drawAura(ctx, it.x, it.y, 34, inner, outer);
+    }
     ctx.font = '26px serif';
     const emoji = ITEM_SPRITES[it.iconKey] || '📦';
     ctx.textAlign = 'center';
-    ctx.fillText(emoji, it.x, it.y + 8);
+    const bob = Math.sin(animTime * 3 + it.x * 0.04 + it.y * 0.03) * 3;
+    ctx.fillText(emoji, it.x, it.y + 8 + bob);
   });
+
+  renderSpriteEffects('under');
 
   // враги
   enemies.forEach(e => {
+    if (e.dead) return;
     const frames = enemySprites[e.type];
+    if (e.type === 'boss') {
+      drawAura(ctx, e.x, e.y, 70, 'rgba(250,204,21,0.35)', 'rgba(251,191,36,0.15)');
+    }
     if (frames && frames.length) {
       const frameIndex = Math.floor(animTime * 6) % frames.length;
       const sprite = frames[frameIndex];
@@ -1511,35 +2191,10 @@ function render() {
     }
   });
 
-  // остальной рендер
-  ctx.restore();
-  });
+  renderSpriteEffects('over');
 
-  // particles
-  particles.forEach(p => {
-    if (p.arc) {
-      ctx.strokeStyle = p.color;
-      ctx.globalAlpha = Math.max(p.life / 0.18, 0);
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, p.radius, p.angle - 0.8, p.angle + 0.8);
-      ctx.stroke();
-      ctx.globalAlpha = 1;
-    } else if (p.circle) {
-      ctx.strokeStyle = p.color;
-      ctx.globalAlpha = Math.max(p.life / 0.35, 0);
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, p.radius * (1 - p.life / 0.35), 0, Math.PI*2);
-      ctx.stroke();
-      ctx.globalAlpha = 1;
-    } else {
-      ctx.fillStyle = p.color;
-      ctx.globalAlpha = Math.max(p.life / 0.4, 0);
-      ctx.fillRect(p.x-2, p.y-2, 4, 4);
-      ctx.globalAlpha = 1;
-    }
-  });
+  // остальной рендер
+  renderParticles();
 
   // player
   if (player) {
@@ -1570,31 +2225,150 @@ function render() {
   ctx.restore();
 }
 
+function renderTileLayer() {
+  if (!tileMap.length) return;
+  const startCol = Math.max(0, Math.floor((camera.x - canvas.width / 2) / TILE_SIZE) - 2);
+  const endCol = Math.min(tileMap[0].length - 1, Math.floor((camera.x + canvas.width / 2) / TILE_SIZE) + 2);
+  const startRow = Math.max(0, Math.floor((camera.y - canvas.height / 2) / TILE_SIZE) - 2);
+  const endRow = Math.min(tileMap.length - 1, Math.floor((camera.y + canvas.height / 2) / TILE_SIZE) + 2);
+
+  for (let y = startRow; y <= endRow; y++) {
+    for (let x = startCol; x <= endCol; x++) {
+      const tile = tileMap[y][x];
+      if (!tile) continue;
+      let sprite;
+      if (tile.type === 'grass') {
+        sprite = tileSprites.grass[tile.variant % tileSprites.grass.length];
+      } else {
+        const variants = tileSprites[tile.type];
+        sprite = variants[tile.mask] || variants[0];
+      }
+      if (sprite) {
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(sprite, x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+      }
+
+      if (tile.type === 'water') {
+        const wave = 0.25 + 0.2 * Math.sin(animTime * 2 + x * 0.6 + y * 0.4);
+        ctx.fillStyle = `rgba(147,197,253,${wave})`;
+        ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+        ctx.strokeStyle = 'rgba(191,219,254,0.35)';
+        ctx.lineWidth = 1;
+        const offset = (Math.sin(animTime * 3 + y) + 1) * 6;
+        ctx.beginPath();
+        ctx.moveTo(x * TILE_SIZE, y * TILE_SIZE + offset);
+        ctx.lineTo(x * TILE_SIZE + TILE_SIZE, y * TILE_SIZE + offset);
+        ctx.stroke();
+      }
+
+      if (tile.type === 'grass' && tile.shoreMask) {
+        ctx.fillStyle = 'rgba(96,165,250,0.18)';
+        if (tile.shoreMask & 1) ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, 4);
+        if (tile.shoreMask & 16) ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE + TILE_SIZE - 4, TILE_SIZE, 4);
+        if (tile.shoreMask & 4) ctx.fillRect(x * TILE_SIZE + TILE_SIZE - 4, y * TILE_SIZE, 4, TILE_SIZE);
+        if (tile.shoreMask & 64) ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, 4, TILE_SIZE);
+      }
+
+      if (tile.type === 'road') {
+        ctx.fillStyle = 'rgba(250,204,21,0.06)';
+        ctx.fillRect(x * TILE_SIZE + 4, y * TILE_SIZE + TILE_SIZE / 2 - 2, TILE_SIZE - 8, 4);
+      }
+    }
+  }
+}
+
+function renderSpriteEffects(layer) {
+  spriteEffects.forEach(effect => {
+    const effectLayer = effect.layer || 'over';
+    if (effectLayer !== layer) return;
+    if (effect.frames) {
+      const frame = effect.frames[Math.min(effect.frame, effect.frames.length - 1)];
+      if (frame) {
+        const size = effect.size || TILE_SIZE;
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(frame, effect.x - size / 2, effect.y - size / 2, size, size);
+      }
+    } else if (effect.type === 'aura') {
+      drawAura(ctx, effect.x, effect.y, effect.radius, effect.inner, effect.outer);
+    }
+  });
+}
+
+function renderParticles() {
+  particles.forEach(p => {
+    if (p.arc) {
+      ctx.strokeStyle = p.color;
+      ctx.globalAlpha = Math.max(p.life / 0.18, 0);
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.radius, p.angle - 0.8, p.angle + 0.8);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    } else if (p.circle) {
+      ctx.strokeStyle = p.color;
+      ctx.globalAlpha = Math.max(p.life / 0.35, 0);
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.radius * (1 - p.life / 0.35), 0, Math.PI*2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    } else {
+      ctx.fillStyle = p.color;
+      ctx.globalAlpha = Math.max(p.life / 0.4, 0);
+      ctx.fillRect(p.x-2, p.y-2, 4, 4);
+      ctx.globalAlpha = 1;
+    }
+  });
+}
+
+function drawAura(context, x, y, radius, innerColor, outerColor) {
+  const gradient = context.createRadialGradient(x, y, radius * 0.2, x, y, radius);
+  gradient.addColorStop(0, innerColor);
+  gradient.addColorStop(1, outerColor);
+  const pulse = 0.7 + 0.2 * Math.sin(animTime * 3 + x * 0.05 + y * 0.05);
+  context.save();
+  context.globalAlpha = pulse;
+  context.fillStyle = gradient;
+  context.beginPath();
+  context.arc(x, y, radius, 0, Math.PI * 2);
+  context.fill();
+  context.restore();
+}
+
 // окружение: деревья/камни/озеро условно
 function drawEnvironment() {
   if (!activeZone) return;
-  ctx.fillStyle = 'rgba(15,23,42,0.2)';
-  // в зависимости от типа props — рисуем разные элементы
+  const center = activeZone.spawn;
+  if (!center) return;
+
   if (activeZone.props === 'trees') {
-    for (let x=200; x<WORLD_WIDTH; x+=260) {
-      for (let y=180; y<WORLD_HEIGHT; y+=220) {
+    ctx.fillStyle = 'rgba(34,139,34,0.4)';
+    for (let i = -4; i <= 4; i++) {
+      for (let j = -4; j <= 4; j++) {
+        const px = center.x + i * 140 + Math.sin(i * 18 + j * 9) * 30;
+        const py = center.y + j * 120 + Math.cos(i * 12 - j * 14) * 24;
         ctx.beginPath();
-        ctx.arc(x, y, 18, 0, Math.PI*2);
+        ctx.arc(px, py, 20 + (Math.sin((i + j) * 12) + 1) * 3, 0, Math.PI * 2);
         ctx.fill();
       }
     }
   } else if (activeZone.props === 'lake') {
-    ctx.fillStyle = 'rgba(59,130,246,0.8)';
-    ctx.beginPath();
-    ctx.ellipse(WORLD_WIDTH*0.5, WORLD_HEIGHT*0.35, 220, 140, 0, 0, Math.PI*2);
-    ctx.fill();
-  } else if (activeZone.props === 'rocks') {
-    ctx.fillStyle = '#111827';
-    for (let i=0;i<40;i++) {
-      const x = 400 + i*60 % WORLD_WIDTH;
-      const y = 200 + (i*90 % WORLD_HEIGHT);
+    ctx.fillStyle = 'rgba(191,219,254,0.28)';
+    for (let i = 0; i < 12; i++) {
+      const angle = (i / 12) * Math.PI * 2;
+      const px = center.x + Math.cos(angle) * 220;
+      const py = center.y + Math.sin(angle) * 150;
       ctx.beginPath();
-      ctx.ellipse(x,y,20,14,Math.random(),0,Math.PI*2);
+      ctx.ellipse(px, py, 16, 9, angle, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  } else if (activeZone.props === 'rocks') {
+    ctx.fillStyle = 'rgba(30,41,59,0.6)';
+    for (let i = -5; i <= 5; i++) {
+      const px = center.x + i * 90 + Math.sin(i * 17) * 18;
+      const py = center.y + Math.cos(i * 11) * 120;
+      ctx.beginPath();
+      ctx.ellipse(px, py, 26, 16, Math.sin(i * 0.5), 0, Math.PI * 2);
       ctx.fill();
     }
   }
