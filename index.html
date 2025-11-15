@@ -7,8 +7,14 @@
     <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-    <div id="loading">Loading…</div>
-    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <div class="game-container">
+        <div id="loading">Loading…</div>
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        <div class="control-bar">
+            <button id="saveButton" type="button">Save Game</button>
+            <span class="save-hint">Press P to quick save</span>
+        </div>
+    </div>
     <script src="game.js"></script>
 </body>
 </html>

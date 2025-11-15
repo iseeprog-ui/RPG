@@ -1,6 +1,12 @@
 (function () {
     const canvas = document.getElementById("gameCanvas");
     const ctx = canvas ? canvas.getContext("2d") : null;
+    const STORAGE_KEY = "rpg-demo-save";
+    const saveNotification = {
+        message: "",
+        timer: 0,
+        error: false
+    };
 
     const tileSize = 32;
     const mapLayout = [
@@ -253,6 +259,11 @@
 
         if (key === "h" && !event.repeat) {
             usePotionHotkey();
+            return;
+        }
+
+        if (key === "p" && !event.repeat) {
+            saveGame();
             return;
         }
 
@@ -849,6 +860,7 @@
         drawInteractionPrompt();
         drawDialogueWindow();
         drawInventoryPanel();
+        drawSaveNotification();
     }
 
     function update(delta) {
@@ -856,6 +868,7 @@
         updateAttack(delta);
         updateEnemies(delta);
         processInteractions();
+        updateSaveNotification(delta);
     }
 
     function findOverlappingItem() {
@@ -1151,6 +1164,256 @@
         );
     }
 
+    function serializeInventory() {
+        return inventory.map((item) => ({
+            id: item.id,
+            name: item.name,
+            type: item.type,
+            description: item.description,
+            color: item.color,
+            healAmount: item.healAmount,
+            bonuses: item.bonuses,
+            equipped: Boolean(item.equipped)
+        }));
+    }
+
+    function serializeItemsOnMap() {
+        return itemsOnMap.map((item) => ({
+            id: item.id,
+            name: item.name,
+            type: item.type,
+            description: item.description,
+            color: item.color,
+            healAmount: item.healAmount,
+            bonuses: item.bonuses,
+            x: item.x,
+            y: item.y,
+            width: item.width,
+            height: item.height
+        }));
+    }
+
+    function serializeEnemies() {
+        return enemies.map((enemy) => ({
+            x: enemy.x,
+            y: enemy.y,
+            width: enemy.width,
+            height: enemy.height,
+            speed: enemy.speed,
+            hp: enemy.hp,
+            contactDamage: enemy.contactDamage,
+            damageInterval: enemy.damageInterval,
+            damageTimer: enemy.damageTimer,
+            expValue: enemy.expValue
+        }));
+    }
+
+    function serializeQuests() {
+        const questState = {};
+        Object.keys(quests).forEach((questId) => {
+            const quest = quests[questId];
+            questState[questId] = {
+                currentCount: quest.currentCount,
+                isCompleted: quest.isCompleted,
+                isActive: quest.isActive,
+                readyToTurnIn: quest.readyToTurnIn
+            };
+        });
+        return questState;
+    }
+
+    function buildPlayerSaveState() {
+        return {
+            x: player.x,
+            y: player.y,
+            width: player.width,
+            height: player.height,
+            speed: player.speed,
+            baseMaxHp: player.baseMaxHp,
+            maxHp: player.maxHp,
+            hp: player.hp,
+            baseDamage: player.baseDamage,
+            attackDamage: player.attackDamage,
+            exp: player.exp,
+            level: player.level,
+            expToNextLevel: player.expToNextLevel,
+            direction: { x: player.direction.x, y: player.direction.y }
+        };
+    }
+
+    function showSaveNotification(message, isError = false) {
+        saveNotification.message = message;
+        saveNotification.timer = 2.5;
+        saveNotification.error = isError;
+    }
+
+    function saveGame() {
+        if (!window.localStorage) {
+            showSaveNotification("Saving not supported", true);
+            return;
+        }
+
+        const saveData = {
+            player: buildPlayerSaveState(),
+            inventory: serializeInventory(),
+            itemsOnMap: serializeItemsOnMap(),
+            enemies: serializeEnemies(),
+            quests: serializeQuests(),
+            trackedQuestId
+        };
+
+        try {
+            window.localStorage.setItem(STORAGE_KEY, JSON.stringify(saveData));
+            // sendSaveToServer(saveData); // Example: sync with optional Flask backend.
+            showSaveNotification("Game saved", false);
+        } catch (error) {
+            console.error("Failed to save game", error);
+            showSaveNotification("Save failed", true);
+        }
+    }
+
+    async function sendSaveToServer(saveData, playerId = "demo-player") {
+        try {
+            await fetch("http://localhost:5000/save", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    player_id: playerId,
+                    data: saveData
+                })
+            });
+        } catch (error) {
+            console.warn("Failed to sync save with server", error);
+        }
+    }
+
+    function loadGame() {
+        if (!window.localStorage) {
+            return false;
+        }
+
+        const raw = window.localStorage.getItem(STORAGE_KEY);
+        if (!raw) {
+            return false;
+        }
+
+        try {
+            const data = JSON.parse(raw);
+            if (!data.player) {
+                return false;
+            }
+
+            player.x = data.player.x ?? player.x;
+            player.y = data.player.y ?? player.y;
+            player.width = data.player.width ?? player.width;
+            player.height = data.player.height ?? player.height;
+            player.speed = data.player.speed ?? player.speed;
+            player.baseMaxHp = data.player.baseMaxHp ?? player.baseMaxHp;
+            player.baseDamage = data.player.baseDamage ?? player.baseDamage;
+            player.level = data.player.level ?? player.level;
+            player.exp = data.player.exp ?? player.exp;
+            player.expToNextLevel = data.player.expToNextLevel ?? player.expToNextLevel;
+            player.direction.x = data.player.direction?.x ?? player.direction.x;
+            player.direction.y = data.player.direction?.y ?? player.direction.y;
+
+            const savedInventory = Array.isArray(data.inventory) ? data.inventory : [];
+            inventory.length = 0;
+            savedInventory.forEach((item) => {
+                inventory.push({
+                    id: item.id,
+                    name: item.name,
+                    type: item.type,
+                    description: item.description,
+                    color: item.color,
+                    healAmount: item.healAmount,
+                    bonuses: item.bonuses,
+                    equipped: Boolean(item.equipped)
+                });
+            });
+
+            if (Array.isArray(data.itemsOnMap)) {
+                itemsOnMap.length = 0;
+                data.itemsOnMap.forEach((item) => {
+                    itemsOnMap.push({
+                        id: item.id,
+                        name: item.name,
+                        type: item.type,
+                        description: item.description,
+                        color: item.color,
+                        healAmount: item.healAmount,
+                        bonuses: item.bonuses,
+                        x: item.x,
+                        y: item.y,
+                        width: item.width,
+                        height: item.height
+                    });
+                });
+            }
+
+            const savedEnemies = Array.isArray(data.enemies) ? data.enemies : [];
+            enemies.length = 0;
+            savedEnemies.forEach((enemy) => {
+                enemies.push({
+                    x: enemy.x,
+                    y: enemy.y,
+                    width: enemy.width,
+                    height: enemy.height,
+                    speed: enemy.speed,
+                    hp: enemy.hp,
+                    contactDamage: enemy.contactDamage,
+                    damageInterval: enemy.damageInterval,
+                    damageTimer: enemy.damageTimer ?? 0,
+                    expValue: enemy.expValue
+                });
+            });
+
+            if (data.quests) {
+                Object.keys(quests).forEach((questId) => {
+                    const quest = quests[questId];
+                    const savedQuest = data.quests[questId];
+                    if (!savedQuest) {
+                        return;
+                    }
+                    quest.currentCount = savedQuest.currentCount ?? quest.currentCount;
+                    quest.isCompleted = Boolean(savedQuest.isCompleted);
+                    quest.isActive = Boolean(savedQuest.isActive);
+                    quest.readyToTurnIn = Boolean(savedQuest.readyToTurnIn);
+                });
+            }
+
+            trackedQuestId = data.trackedQuestId ?? trackedQuestId;
+
+            refreshPlayerStats();
+            if (typeof data.player.maxHp === "number") {
+                player.maxHp = data.player.maxHp;
+            }
+            if (typeof data.player.hp === "number") {
+                player.hp = Math.min(player.maxHp, Math.max(0, data.player.hp));
+            }
+            if (typeof data.player.attackDamage === "number") {
+                player.attackDamage = data.player.attackDamage;
+            }
+
+            player.attackCooldownTimer = 0;
+            player.attackTimer = 0;
+            player.attackHitSet = new Set();
+
+            return true;
+        } catch (error) {
+            console.error("Failed to load save data", error);
+            window.localStorage.removeItem(STORAGE_KEY);
+            return false;
+        }
+    }
+
+    function updateSaveNotification(delta) {
+        if (saveNotification.timer > 0) {
+            saveNotification.timer = Math.max(0, saveNotification.timer - delta);
+        }
+    }
+
     function grantExperience(amount) {
         player.exp += amount;
         while (player.exp >= player.expToNextLevel) {
@@ -1204,6 +1467,28 @@
         ctx.fillText(message, boxX + padding, boxY + boxHeight - 14);
     }
 
+    function drawSaveNotification() {
+        if (!ctx || !canvas || saveNotification.timer <= 0 || !saveNotification.message) {
+            return;
+        }
+
+        const message = saveNotification.message;
+        ctx.font = "14px sans-serif";
+        const textWidth = ctx.measureText(message).width;
+        const padding = 12;
+        const boxWidth = textWidth + padding * 2;
+        const boxHeight = 34;
+        const boxX = canvas.width - boxWidth - 24;
+        const boxY = 24;
+
+        ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+        ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
+        ctx.strokeStyle = saveNotification.error ? "#ff6b6b" : "#5ad45a";
+        ctx.strokeRect(boxX, boxY, boxWidth, boxHeight);
+        ctx.fillStyle = "#ffffff";
+        ctx.fillText(message, boxX + padding, boxY + boxHeight - 12);
+    }
+
     function gameLoop(timestamp) {
         const delta = (timestamp - lastTimestamp) / 1000 || 0;
         lastTimestamp = timestamp;
@@ -1220,7 +1505,17 @@
         }
 
         clearLoadingText();
-        spawnEnemies();
+        const saveButton = document.getElementById("saveButton");
+        if (saveButton) {
+            saveButton.addEventListener("click", () => saveGame());
+        }
+
+        const loaded = loadGame();
+        if (!loaded) {
+            spawnEnemies();
+        } else if (enemies.length === 0) {
+            spawnEnemies();
+        }
         window.addEventListener("keydown", handleKeyDown);
         window.addEventListener("keyup", handleKeyUp);
         canvas.addEventListener("click", handleCanvasClick);
