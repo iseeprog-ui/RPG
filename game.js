@@ -60,6 +60,106 @@
     const inventory = [];
     const inventorySlots = [];
 
+    const npcs = [
+        {
+            id: "elder",
+            name: "Elder Rowan",
+            x: tileSize * 8.5,
+            y: tileSize * 6.5,
+            width: 26,
+            height: 30,
+            color: "#6fa8dc",
+            questToGive: "defeatEnemies",
+            dialogues: {
+                offerQuest: [
+                    "The woods are crawling with beasts...",
+                    "Please defeat three of them before they reach the village!"
+                ],
+                questInProgress: [
+                    "Stay vigilant, hero.",
+                    "Three beasts still stalk our paths."
+                ],
+                questTurnIn: [
+                    "Your bravery saved us all!",
+                    "Take this reward as a token of our gratitude."
+                ],
+                questCompleted: [
+                    "Thanks to you, our people can breathe easier."
+                ]
+            }
+        },
+        {
+            id: "scholar",
+            name: "Scholar Mira",
+            x: tileSize * 16.5,
+            y: tileSize * 4.5,
+            width: 24,
+            height: 30,
+            color: "#c27ba0",
+            questToGive: "retrieveRelic",
+            prerequisiteQuestId: "defeatEnemies",
+            dialogues: {
+                prerequisite: [
+                    "The Elder still needs your aid.",
+                    "Return once the village is safe."
+                ],
+                offerQuest: [
+                    "With the beasts gone, I can resume my research...",
+                    "Could you bring me the Ancient Relic from the ruins?"
+                ],
+                questInProgress: [
+                    "The relic should be east of here, shimmering with arcane light."
+                ],
+                questTurnIn: [
+                    "Splendid! The relic is intact.",
+                    "This knowledge will aid us all."
+                ],
+                questCompleted: [
+                    "Thank you again. Its secrets are wondrous!"
+                ]
+            }
+        }
+    ];
+
+    const dialogueState = {
+        active: false,
+        npc: null,
+        lines: [],
+        index: 0,
+        questToActivate: null,
+        questToComplete: null
+    };
+
+    const quests = {
+        defeatEnemies: {
+            id: "defeatEnemies",
+            description: "Defeat 3 beasts threatening the village.",
+            targetType: "enemyKill",
+            targetCount: 3,
+            currentCount: 0,
+            isCompleted: false,
+            isActive: false,
+            requiresTurnIn: true,
+            readyToTurnIn: false,
+            rewardExp: 120
+        },
+        retrieveRelic: {
+            id: "retrieveRelic",
+            description: "Bring the Ancient Relic to Scholar Mira.",
+            targetType: "itemPickup",
+            targetCount: 1,
+            currentCount: 0,
+            isCompleted: false,
+            isActive: false,
+            requiresTurnIn: true,
+            readyToTurnIn: false,
+            itemId: "ancient-relic",
+            rewardExp: 160
+        }
+    };
+
+    let trackedQuestId = null;
+
     const itemsOnMap = [
         {
             id: "potion-1",
@@ -96,6 +196,17 @@
             height: 18,
             color: "#c97c5d",
             bonuses: { maxHp: 25 }
+        },
+        {
+            id: "ancient-relic",
+            name: "Ancient Relic",
+            type: "quest",
+            description: "A mysterious artifact pulsing with energy.",
+            x: tileSize * 18.5,
+            y: tileSize * 5.5,
+            width: 18,
+            height: 18,
+            color: "#8a2be2"
         }
     ];
 
@@ -120,6 +231,9 @@
         }
 
         if (event.code === "Space") {
+            if (dialogueState.active) {
+                return;
+            }
             attackRequested = true;
             return;
         }
@@ -130,6 +244,9 @@
         }
 
         if (key === "i" && !event.repeat) {
+            if (dialogueState.active) {
+                return;
+            }
             inventoryOpen = !inventoryOpen;
             return;
         }
@@ -218,6 +335,10 @@
     }
 
     function movePlayer(delta) {
+        if (dialogueState.active) {
+            return;
+        }
+
         let moveX = 0;
         let moveY = 0;
 
@@ -331,10 +452,15 @@
 
         for (let i = enemies.length - 1; i >= 0; i -= 1) {
             if (enemies[i].hp <= 0) {
+                handleEnemyDefeated(enemies[i]);
                 grantExperience(enemies[i].expValue || 35);
                 enemies.splice(i, 1);
             }
         }
+    }
+
+    function handleEnemyDefeated(enemy) {
+        updateQuestProgress("enemyKill", { amount: 1 });
     }
 
     function computeAttackHitbox() {
@@ -514,6 +640,120 @@
         ctx.fillText("[I] Inventory  [H] Use Potion", x, textStartY + 28);
     }
 
+    function determineTrackedQuest() {
+        if (trackedQuestId) {
+            const quest = quests[trackedQuestId];
+            if (quest && (!quest.isCompleted || quest.readyToTurnIn)) {
+                return quest;
+            }
+        }
+
+        const questList = Object.values(quests);
+        const readyQuest = questList.find((quest) => quest.readyToTurnIn && !quest.isCompleted);
+        if (readyQuest) {
+            trackedQuestId = readyQuest.id;
+            return readyQuest;
+        }
+
+        const activeQuest = questList.find((quest) => quest.isActive);
+        if (activeQuest) {
+            trackedQuestId = activeQuest.id;
+            return activeQuest;
+        }
+
+        return null;
+    }
+
+    function drawQuestTracker() {
+        if (!ctx || !canvas) {
+            return;
+        }
+
+        const quest = determineTrackedQuest();
+        if (!quest) {
+            return;
+        }
+
+        const panelWidth = 260;
+        const panelHeight = 90;
+        const panelX = 20;
+        const panelY = 120;
+
+        ctx.fillStyle = "rgba(15, 15, 15, 0.75)";
+        ctx.fillRect(panelX, panelY, panelWidth, panelHeight);
+        ctx.strokeStyle = "#ffffff";
+        ctx.strokeRect(panelX, panelY, panelWidth, panelHeight);
+
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "14px sans-serif";
+        ctx.fillText("Quest", panelX + 12, panelY + 20);
+
+        ctx.font = "12px sans-serif";
+        drawWrappedText(quest.description, panelX + 12, panelY + 38, panelWidth - 24, 16);
+
+        const progressText = quest.readyToTurnIn
+            ? "Return to the quest giver"
+            : `${quest.currentCount}/${quest.targetCount} completed`;
+        ctx.fillText(progressText, panelX + 12, panelY + panelHeight - 14);
+    }
+
+    function drawDialogueWindow() {
+        if (!ctx || !canvas || !dialogueState.active || dialogueState.lines.length === 0) {
+            return;
+        }
+
+        const windowWidth = canvas.width - 80;
+        const windowHeight = 140;
+        const windowX = 40;
+        const windowY = canvas.height - windowHeight - 30;
+
+        ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
+        ctx.fillRect(windowX, windowY, windowWidth, windowHeight);
+        ctx.strokeStyle = "#ffffff";
+        ctx.strokeRect(windowX, windowY, windowWidth, windowHeight);
+
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "16px sans-serif";
+        const npcName = dialogueState.npc ? dialogueState.npc.name : "";
+        if (npcName) {
+            ctx.fillText(npcName, windowX + 16, windowY + 28);
+        }
+
+        const textY = windowY + 54;
+        ctx.font = "14px sans-serif";
+        const currentLine = dialogueState.lines[Math.min(dialogueState.index, dialogueState.lines.length - 1)];
+        drawWrappedText(currentLine, windowX + 16, textY, windowWidth - 32, 18);
+
+        ctx.font = "12px sans-serif";
+        ctx.fillText("Press E to continue", windowX + windowWidth - 150, windowY + windowHeight - 12);
+    }
+
+    function drawWrappedText(text, startX, startY, maxWidth, lineHeight) {
+        if (!ctx) {
+            return;
+        }
+
+        const words = (text || "").split(" ");
+        let line = "";
+        let y = startY;
+
+        for (let i = 0; i < words.length; i += 1) {
+            const testLine = line.length > 0 ? `${line} ${words[i]}` : words[i];
+            const metrics = ctx.measureText(testLine);
+            if (metrics.width > maxWidth && line.length > 0) {
+                ctx.fillText(line, startX, y);
+                line = words[i];
+                y += lineHeight;
+            } else {
+                line = testLine;
+            }
+        }
+
+        if (line.length > 0) {
+            ctx.fillText(line, startX, y);
+        }
+    }
+
     function drawInventoryPanel() {
         inventorySlots.length = 0;
         if (!ctx || !canvas || !inventoryOpen) {
@@ -578,6 +818,20 @@
         });
     }
 
+    function drawNpcs() {
+        if (!ctx) {
+            return;
+        }
+
+        npcs.forEach((npc) => {
+            ctx.fillStyle = npc.color;
+            ctx.fillRect(npc.x, npc.y, npc.width, npc.height);
+            ctx.strokeStyle = "#000000";
+            ctx.lineWidth = 2;
+            ctx.strokeRect(npc.x, npc.y, npc.width, npc.height);
+        });
+    }
+
     function draw() {
         if (!ctx || !canvas) {
             return;
@@ -586,11 +840,14 @@
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         drawMap();
         drawItems();
+        drawNpcs();
         drawAttackBox();
         drawEnemies();
         drawPlayer();
         drawHud();
+        drawQuestTracker();
         drawInteractionPrompt();
+        drawDialogueWindow();
         drawInventoryPanel();
     }
 
@@ -598,8 +855,7 @@
         movePlayer(delta);
         updateAttack(delta);
         updateEnemies(delta);
-        handleItemPickup();
-        interactRequested = false;
+        processInteractions();
     }
 
     function findOverlappingItem() {
@@ -624,13 +880,9 @@
     }
 
     function handleItemPickup() {
-        if (!interactRequested) {
-            return;
-        }
-
         const overlap = findOverlappingItem();
         if (!overlap) {
-            return;
+            return false;
         }
 
         const { item, index } = overlap;
@@ -646,6 +898,202 @@
         };
         itemsOnMap.splice(index, 1);
         inventory.push(inventoryItem);
+        updateQuestProgress("itemPickup", { itemId: inventoryItem.id });
+        return true;
+    }
+
+    function findNearbyNpc() {
+        const playerCenterX = player.x + player.width / 2;
+        const playerCenterY = player.y + player.height / 2;
+
+        for (let i = 0; i < npcs.length; i += 1) {
+            const npc = npcs[i];
+            const npcCenterX = npc.x + npc.width / 2;
+            const npcCenterY = npc.y + npc.height / 2;
+            const distance = Math.hypot(playerCenterX - npcCenterX, playerCenterY - npcCenterY);
+
+            if (distance <= 48) {
+                return npc;
+            }
+        }
+
+        return null;
+    }
+
+    function processInteractions() {
+        if (!interactRequested) {
+            return;
+        }
+
+        if (dialogueState.active) {
+            advanceDialogue();
+            interactRequested = false;
+            return;
+        }
+
+        const nearbyNpc = findNearbyNpc();
+        if (nearbyNpc) {
+            startDialogueWithNpc(nearbyNpc);
+            interactRequested = false;
+            return;
+        }
+
+        handleItemPickup();
+        interactRequested = false;
+    }
+
+    function startDialogueWithNpc(npc) {
+        dialogueState.active = false;
+        dialogueState.questToActivate = null;
+        dialogueState.questToComplete = null;
+        inventoryOpen = false;
+
+        const lines = buildNpcDialogue(npc);
+        if (!lines || lines.length === 0) {
+            return;
+        }
+
+        dialogueState.active = true;
+        dialogueState.npc = npc;
+        dialogueState.lines = lines;
+        dialogueState.index = 0;
+    }
+
+    function buildNpcDialogue(npc) {
+        const prerequisiteId = npc.prerequisiteQuestId;
+        if (prerequisiteId) {
+            const prerequisite = quests[prerequisiteId];
+            if (prerequisite && !prerequisite.isCompleted) {
+                return npc.dialogues.prerequisite || npc.dialogues.default || [];
+            }
+        }
+
+        const questId = npc.questToGive;
+        if (!questId) {
+            return npc.dialogues.default || [];
+        }
+
+        const quest = quests[questId];
+        if (!quest) {
+            return npc.dialogues.default || [];
+        }
+
+        if (quest.isCompleted) {
+            return npc.dialogues.questCompleted || npc.dialogues.default || [];
+        }
+
+        if (quest.readyToTurnIn) {
+            dialogueState.questToComplete = questId;
+            return npc.dialogues.questTurnIn || npc.dialogues.questCompleted || npc.dialogues.default || [];
+        }
+
+        if (quest.isActive) {
+            return npc.dialogues.questInProgress || npc.dialogues.default || [];
+        }
+
+        dialogueState.questToActivate = questId;
+        return npc.dialogues.offerQuest || npc.dialogues.default || [];
+    }
+
+    function advanceDialogue() {
+        if (!dialogueState.active) {
+            return;
+        }
+
+        dialogueState.index += 1;
+        if (dialogueState.index >= dialogueState.lines.length) {
+            concludeDialogue();
+        }
+    }
+
+    function concludeDialogue() {
+        if (!dialogueState.active) {
+            return;
+        }
+
+        const questToActivate = dialogueState.questToActivate;
+        const questToComplete = dialogueState.questToComplete;
+
+        dialogueState.active = false;
+        dialogueState.npc = null;
+        dialogueState.lines = [];
+        dialogueState.index = 0;
+        dialogueState.questToActivate = null;
+        dialogueState.questToComplete = null;
+
+        if (questToActivate) {
+            activateQuest(questToActivate);
+        }
+
+        if (questToComplete) {
+            completeQuest(questToComplete);
+        }
+    }
+
+    function activateQuest(questId) {
+        const quest = quests[questId];
+        if (!quest || quest.isActive || quest.isCompleted) {
+            return;
+        }
+
+        quest.isActive = true;
+        quest.currentCount = 0;
+        quest.readyToTurnIn = false;
+        trackedQuestId = questId;
+    }
+
+    function completeQuest(questId) {
+        const quest = quests[questId];
+        if (!quest || quest.isCompleted) {
+            return;
+        }
+
+        quest.isCompleted = true;
+        quest.isActive = false;
+        quest.readyToTurnIn = false;
+
+        if (quest.itemId) {
+            const itemIndex = inventory.findIndex((inventoryItem) => inventoryItem.id === quest.itemId);
+            if (itemIndex !== -1) {
+                inventory.splice(itemIndex, 1);
+            }
+        }
+
+        if (quest.rewardExp) {
+            grantExperience(quest.rewardExp);
+        }
+
+        if (trackedQuestId === questId) {
+            trackedQuestId = null;
+        }
+    }
+
+    function updateQuestProgress(type, details = {}) {
+        Object.values(quests).forEach((quest) => {
+            if (!quest || quest.isCompleted || !quest.isActive) {
+                return;
+            }
+
+            if (quest.targetType !== type) {
+                return;
+            }
+
+            if (type === "itemPickup" && quest.itemId && quest.itemId !== details.itemId) {
+                return;
+            }
+
+            const amount = details.amount || 1;
+            quest.currentCount = Math.min(quest.targetCount, quest.currentCount + amount);
+
+            if (quest.currentCount >= quest.targetCount) {
+                if (quest.requiresTurnIn) {
+                    quest.readyToTurnIn = true;
+                    trackedQuestId = quest.id;
+                } else {
+                    completeQuest(quest.id);
+                }
+            }
+        });
     }
 
     function activateInventoryItem(item, index) {
@@ -661,6 +1109,11 @@
         if (item.type === "equipment") {
             item.equipped = !item.equipped;
             refreshPlayerStats();
+            return;
+        }
+
+        if (item.type === "quest") {
+            return;
         }
     }
 
@@ -716,16 +1169,25 @@
     }
 
     function drawInteractionPrompt() {
-        if (!ctx || !canvas) {
+        if (!ctx || !canvas || dialogueState.active) {
             return;
         }
 
-        const overlap = findOverlappingItem();
-        if (!overlap) {
+        let message = "";
+        const nearbyNpc = findNearbyNpc();
+        if (nearbyNpc) {
+            message = `Press E to talk to ${nearbyNpc.name}`;
+        } else {
+            const overlap = findOverlappingItem();
+            if (overlap) {
+                message = `Press E to pick up ${overlap.item.name}`;
+            }
+        }
+
+        if (!message) {
             return;
         }
 
-        const message = `Press E to pick up ${overlap.item.name}`;
         ctx.font = "14px sans-serif";
         const textWidth = ctx.measureText(message).width;
         const padding = 16;
