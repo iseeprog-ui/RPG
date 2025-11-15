@@ -34,8 +34,14 @@
         width: 24,
         height: 24,
         speed: 160,
+        baseMaxHp: 100,
         maxHp: 100,
         hp: 100,
+        baseDamage: 30,
+        attackDamage: 30,
+        exp: 0,
+        level: 1,
+        expToNextLevel: 100,
         direction: { x: 1, y: 0 },
         isAttacking: false,
         attackDuration: 0.15,
@@ -48,7 +54,50 @@
     const enemies = [];
     const keysPressed = new Set();
     let attackRequested = false;
+    let interactRequested = false;
     let lastTimestamp = 0;
+    let inventoryOpen = false;
+    const inventory = [];
+    const inventorySlots = [];
+
+    const itemsOnMap = [
+        {
+            id: "potion-1",
+            name: "Healing Potion",
+            type: "potion",
+            description: "Restores 40 HP",
+            x: tileSize * 4.5,
+            y: tileSize * 3.5,
+            width: 18,
+            height: 18,
+            color: "#5ac8fa",
+            healAmount: 40
+        },
+        {
+            id: "sword-1",
+            name: "Iron Sword",
+            type: "equipment",
+            description: "+10 Attack",
+            x: tileSize * 14.5,
+            y: tileSize * 10.5,
+            width: 18,
+            height: 18,
+            color: "#d4af37",
+            bonuses: { attackDamage: 10 }
+        },
+        {
+            id: "armor-1",
+            name: "Leather Armor",
+            type: "equipment",
+            description: "+25 Max HP",
+            x: tileSize * 7.5,
+            y: tileSize * 15.5,
+            width: 18,
+            height: 18,
+            color: "#c97c5d",
+            bonuses: { maxHp: 25 }
+        }
+    ];
 
     function clearLoadingText() {
         const loadingElement = document.getElementById("loading");
@@ -75,6 +124,16 @@
             return;
         }
 
+        if (key === "e") {
+            interactRequested = true;
+            return;
+        }
+
+        if (key === "i" && !event.repeat) {
+            inventoryOpen = !inventoryOpen;
+            return;
+        }
+
         keysPressed.add(key);
     }
 
@@ -83,6 +142,29 @@
             return;
         }
         keysPressed.delete(event.key.toLowerCase());
+    }
+
+    function handleCanvasClick(event) {
+        if (!inventoryOpen) {
+            return;
+        }
+
+        const rect = canvas.getBoundingClientRect();
+        const clickX = event.clientX - rect.left;
+        const clickY = event.clientY - rect.top;
+
+        for (let i = 0; i < inventorySlots.length; i += 1) {
+            const slot = inventorySlots[i];
+            if (
+                clickX >= slot.x &&
+                clickX <= slot.x + slot.width &&
+                clickY >= slot.y &&
+                clickY <= slot.y + slot.height
+            ) {
+                activateInventoryItem(slot.item, slot.inventoryIndex);
+                break;
+            }
+        }
     }
 
     function isWallTile(row, col) {
@@ -202,7 +284,8 @@
                 hp: enemyTemplate.hp,
                 contactDamage: enemyTemplate.contactDamage,
                 damageInterval: enemyTemplate.damageInterval,
-                damageTimer: enemyTemplate.damageTimer
+                damageTimer: enemyTemplate.damageTimer,
+                expValue: 50
             });
         });
     }
@@ -243,6 +326,7 @@
 
         for (let i = enemies.length - 1; i >= 0; i -= 1) {
             if (enemies[i].hp <= 0) {
+                grantExperience(enemies[i].expValue || 35);
                 enemies.splice(i, 1);
             }
         }
@@ -297,7 +381,7 @@
 
         enemies.forEach((enemy) => {
             if (!player.attackHitSet.has(enemy) && rectanglesOverlap(attackBox.x, attackBox.y, attackBox.width, attackBox.height, enemy.x, enemy.y, enemy.width, enemy.height)) {
-                enemy.hp -= 30;
+                enemy.hp -= player.attackDamage;
                 player.attackHitSet.add(enemy);
             }
         });
@@ -368,6 +452,19 @@
         });
     }
 
+    function drawItems() {
+        if (!ctx) {
+            return;
+        }
+
+        itemsOnMap.forEach((item) => {
+            ctx.fillStyle = item.color;
+            ctx.fillRect(item.x, item.y, item.width, item.height);
+            ctx.strokeStyle = "#1a1a1a";
+            ctx.strokeRect(item.x, item.y, item.width, item.height);
+        });
+    }
+
     function drawHud() {
         if (!ctx) {
             return;
@@ -395,6 +492,72 @@
         ctx.fillStyle = "#ffffff";
         ctx.font = "12px sans-serif";
         ctx.fillText(`HP: ${Math.ceil(player.hp)} / ${player.maxHp}`, x, y + barHeight + 14);
+        ctx.fillText(`Lvl ${player.level}  EXP: ${player.exp} / ${player.expToNextLevel}`, x, y + barHeight + 28);
+        ctx.fillText("[I] Inventory", x, y + barHeight + 42);
+    }
+
+    function drawInventoryPanel() {
+        inventorySlots.length = 0;
+        if (!ctx || !canvas || !inventoryOpen) {
+            return;
+        }
+
+        const panelWidth = 260;
+        const panelHeight = 240;
+        const panelX = canvas.width - panelWidth - 20;
+        const panelY = 60;
+        const headerHeight = 30;
+
+        ctx.fillStyle = "rgba(20, 20, 20, 0.85)";
+        ctx.fillRect(panelX, panelY, panelWidth, panelHeight);
+        ctx.strokeStyle = "#ffffff";
+        ctx.strokeRect(panelX, panelY, panelWidth, panelHeight);
+
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "16px sans-serif";
+        ctx.fillText("Inventory", panelX + 16, panelY + 22);
+
+        ctx.font = "12px sans-serif";
+        ctx.fillText("Click items to use/equip", panelX + 16, panelY + headerHeight + 8);
+
+        const slotSize = 44;
+        const padding = 16;
+        const columns = 3;
+
+        inventory.forEach((item, index) => {
+            const col = index % columns;
+            const row = Math.floor(index / columns);
+            const slotX = panelX + padding + col * (slotSize + padding);
+            const slotY = panelY + headerHeight + 16 + row * (slotSize + padding);
+
+            ctx.fillStyle = "rgba(60, 60, 60, 0.9)";
+            ctx.fillRect(slotX - 4, slotY - 4, slotSize + 8, slotSize + 8);
+
+            ctx.fillStyle = item.color || "#cccccc";
+            ctx.fillRect(slotX, slotY, slotSize, slotSize);
+            ctx.strokeStyle = "#000000";
+            ctx.strokeRect(slotX, slotY, slotSize, slotSize);
+
+            if (item.type === "equipment" && item.equipped) {
+                ctx.strokeStyle = "#32cd32";
+                ctx.lineWidth = 3;
+                ctx.strokeRect(slotX - 2, slotY - 2, slotSize + 4, slotSize + 4);
+                ctx.lineWidth = 1;
+            }
+
+            ctx.fillStyle = "#ffffff";
+            ctx.font = "10px sans-serif";
+            ctx.fillText(item.name, slotX, slotY + slotSize + 12);
+
+            inventorySlots.push({
+                x: slotX,
+                y: slotY,
+                width: slotSize,
+                height: slotSize,
+                item,
+                inventoryIndex: index
+            });
+        });
     }
 
     function draw() {
@@ -404,16 +567,153 @@
 
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         drawMap();
+        drawItems();
         drawAttackBox();
         drawEnemies();
         drawPlayer();
         drawHud();
+        drawInteractionPrompt();
+        drawInventoryPanel();
     }
 
     function update(delta) {
         movePlayer(delta);
         updateAttack(delta);
         updateEnemies(delta);
+        handleItemPickup();
+        interactRequested = false;
+    }
+
+    function findOverlappingItem() {
+        for (let i = 0; i < itemsOnMap.length; i += 1) {
+            const item = itemsOnMap[i];
+            if (
+                rectanglesOverlap(
+                    player.x,
+                    player.y,
+                    player.width,
+                    player.height,
+                    item.x,
+                    item.y,
+                    item.width,
+                    item.height
+                )
+            ) {
+                return { item, index: i };
+            }
+        }
+        return null;
+    }
+
+    function handleItemPickup() {
+        if (!interactRequested) {
+            return;
+        }
+
+        const overlap = findOverlappingItem();
+        if (!overlap) {
+            return;
+        }
+
+        const { item, index } = overlap;
+        const inventoryItem = {
+            id: item.id,
+            name: item.name,
+            type: item.type,
+            description: item.description,
+            color: item.color,
+            healAmount: item.healAmount,
+            bonuses: item.bonuses,
+            equipped: false
+        };
+        itemsOnMap.splice(index, 1);
+        inventory.push(inventoryItem);
+    }
+
+    function activateInventoryItem(item, index) {
+        if (item.type === "potion") {
+            if (player.hp >= player.maxHp) {
+                return;
+            }
+            player.hp = Math.min(player.maxHp, player.hp + (item.healAmount || 30));
+            inventory.splice(index, 1);
+            return;
+        }
+
+        if (item.type === "equipment") {
+            item.equipped = !item.equipped;
+            refreshPlayerStats();
+        }
+    }
+
+    function calculateEquipmentBonuses() {
+        let bonusHp = 0;
+        let bonusDamage = 0;
+
+        inventory.forEach((item) => {
+            if (item.type === "equipment" && item.equipped && item.bonuses) {
+                bonusHp += item.bonuses.maxHp || 0;
+                bonusDamage += item.bonuses.attackDamage || 0;
+            }
+        });
+
+        return { bonusHp, bonusDamage };
+    }
+
+    function refreshPlayerStats() {
+        const previousMaxHp = player.maxHp;
+        const previousRatio = previousMaxHp > 0 ? player.hp / previousMaxHp : 1;
+        const { bonusHp, bonusDamage } = calculateEquipmentBonuses();
+        player.maxHp = player.baseMaxHp + bonusHp;
+        player.attackDamage = player.baseDamage + bonusDamage;
+        player.hp = Math.min(
+            player.maxHp,
+            Math.max(0, Math.round(player.maxHp * previousRatio))
+        );
+    }
+
+    function grantExperience(amount) {
+        player.exp += amount;
+        while (player.exp >= player.expToNextLevel) {
+            player.exp -= player.expToNextLevel;
+            levelUp();
+        }
+    }
+
+    function levelUp() {
+        player.level += 1;
+        player.baseMaxHp += 20;
+        player.baseDamage += 5;
+        player.expToNextLevel = Math.floor(player.expToNextLevel * 1.5);
+        refreshPlayerStats();
+        player.hp = player.maxHp;
+    }
+
+    function drawInteractionPrompt() {
+        if (!ctx || !canvas) {
+            return;
+        }
+
+        const overlap = findOverlappingItem();
+        if (!overlap) {
+            return;
+        }
+
+        const message = `Press E to pick up ${overlap.item.name}`;
+        ctx.font = "14px sans-serif";
+        const textWidth = ctx.measureText(message).width;
+        const padding = 16;
+        const boxWidth = Math.min(canvas.width - 40, textWidth + padding * 2);
+        const boxHeight = 40;
+        const boxX = 20;
+        const boxY = canvas.height - boxHeight - 20;
+
+        ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
+        ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
+        ctx.strokeStyle = "#ffffff";
+        ctx.strokeRect(boxX, boxY, boxWidth, boxHeight);
+        ctx.fillStyle = "#ffffff";
+        ctx.fillText(message, boxX + padding, boxY + boxHeight - 14);
     }
 
     function gameLoop(timestamp) {
@@ -435,6 +735,8 @@
         spawnEnemies();
         window.addEventListener("keydown", handleKeyDown);
         window.addEventListener("keyup", handleKeyUp);
+        canvas.addEventListener("click", handleCanvasClick);
+        refreshPlayerStats();
         window.requestAnimationFrame(gameLoop);
     };
 })();
