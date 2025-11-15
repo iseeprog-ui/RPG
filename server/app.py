@@ -17,6 +17,7 @@ def _read_saves() -> Dict[str, Any]:
             with SAVE_FILE.open("r", encoding="utf-8") as file:
                 return json.load(file)
         except json.JSONDecodeError:
+            SAVE_FILE.unlink(missing_ok=True)
             return {}
     return {}
 
