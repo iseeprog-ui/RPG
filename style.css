@@ -38,6 +38,8 @@ body {
     border: 2px solid #3a3a3a;
     box-shadow: 0 0 20px rgba(0, 255, 153, 0.4);
     background: #121212;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
 }
 
 .control-bar {

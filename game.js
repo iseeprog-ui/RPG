@@ -34,11 +34,24 @@
     const mapRows = map.length;
     const mapCols = map[0].length;
 
+    const animationFrameCount = 10;
+    const animationSpeed = 8;
+    let animationTimer = 0;
+
+    const pixelArtLibrary = createPixelArt(animationFrameCount);
+    const heroSprite = pixelArtLibrary.sprites.player.hero;
+    const enemySpriteLibrary = pixelArtLibrary.sprites.enemies;
+    const npcSpriteLibrary = pixelArtLibrary.sprites.npcs;
+    const itemSpriteLibrary = pixelArtLibrary.sprites.items;
+    const tileAnimations = pixelArtLibrary.tiles;
+    const effectSprites = pixelArtLibrary.effects;
+
     const player = {
         x: tileSize * 2,
         y: tileSize * 2,
-        width: 24,
-        height: 24,
+        width: heroSprite.pixelWidth * heroSprite.scale,
+        height: heroSprite.pixelHeight * heroSprite.scale,
+        spriteKey: "hero",
         speed: 160,
         baseMaxHp: 100,
         maxHp: 100,
@@ -54,10 +67,38 @@
         attackTimer: 0,
         attackCooldown: 0.5,
         attackCooldownTimer: 0,
-        attackHitSet: new Set()
+        attackHitSet: new Set(),
+        isMoving: false
     };
+    player.sprite = heroSprite;
 
     const enemies = [];
+    const enemyArchetypes = {
+        brute: {
+            type: "brute",
+            spriteKey: "brute",
+            sprite: enemySpriteLibrary.brute,
+            width: enemySpriteLibrary.brute.pixelWidth * enemySpriteLibrary.brute.scale,
+            height: enemySpriteLibrary.brute.pixelHeight * enemySpriteLibrary.brute.scale,
+            speed: 70,
+            hp: 120,
+            contactDamage: 10,
+            damageInterval: 0.85,
+            expValue: 80
+        },
+        wisp: {
+            type: "wisp",
+            spriteKey: "wisp",
+            sprite: enemySpriteLibrary.wisp,
+            width: enemySpriteLibrary.wisp.pixelWidth * enemySpriteLibrary.wisp.scale,
+            height: enemySpriteLibrary.wisp.pixelHeight * enemySpriteLibrary.wisp.scale,
+            speed: 110,
+            hp: 55,
+            contactDamage: 6,
+            damageInterval: 0.6,
+            expValue: 60
+        }
+    };
     const keysPressed = new Set();
     let attackRequested = false;
     let interactRequested = false;
@@ -72,9 +113,9 @@
             name: "Elder Rowan",
             x: tileSize * 8.5,
             y: tileSize * 6.5,
-            width: 26,
-            height: 30,
-            color: "#6fa8dc",
+            width: 28,
+            height: 32,
+            spriteKey: "elder",
             questToGive: "defeatEnemies",
             dialogues: {
                 offerQuest: [
@@ -99,9 +140,9 @@
             name: "Scholar Mira",
             x: tileSize * 16.5,
             y: tileSize * 4.5,
-            width: 24,
-            height: 30,
-            color: "#c27ba0",
+            width: 26,
+            height: 32,
+            spriteKey: "scholar",
             questToGive: "retrieveRelic",
             prerequisiteQuestId: "defeatEnemies",
             dialogues: {
@@ -126,6 +167,14 @@
             }
         }
     ];
+
+    npcs.forEach((npc) => {
+        npc.sprite = npcSpriteLibrary[npc.spriteKey] || npcSpriteLibrary.elder;
+        if (npc.sprite) {
+            npc.width = npc.sprite.pixelWidth * npc.sprite.scale;
+            npc.height = npc.sprite.pixelHeight * npc.sprite.scale;
+        }
+    });
 
     const dialogueState = {
         active: false,
@@ -177,7 +226,8 @@
             width: 18,
             height: 18,
             color: "#5ac8fa",
-            healAmount: 40
+            healAmount: 40,
+            spriteKey: "potion"
         },
         {
             id: "sword-1",
@@ -189,7 +239,8 @@
             width: 18,
             height: 18,
             color: "#d4af37",
-            bonuses: { attackDamage: 10 }
+            bonuses: { attackDamage: 10 },
+            spriteKey: "sword"
         },
         {
             id: "armor-1",
@@ -201,20 +252,655 @@
             width: 18,
             height: 18,
             color: "#c97c5d",
-            bonuses: { maxHp: 25 }
+            bonuses: { maxHp: 25 },
+            spriteKey: "armor"
         },
         {
             id: "ancient-relic",
             name: "Ancient Relic",
             type: "quest",
-            description: "A mysterious artifact pulsing with energy.",
+            description: "A shimmering relic pulsing with energy.",
             x: tileSize * 18.5,
             y: tileSize * 5.5,
             width: 18,
             height: 18,
-            color: "#8a2be2"
+            color: "#8a2be2",
+            spriteKey: "relic"
         }
     ];
+
+    itemsOnMap.forEach((item) => {
+        item.spriteKey = item.spriteKey || "potion";
+        item.sprite = resolveItemSprite(item);
+        if (item.sprite) {
+            const displaySize = item.sprite.pixelWidth * item.sprite.scale;
+            item.width = displaySize;
+            item.height = displaySize;
+        }
+    });
+
+    function resolveItemSpriteKey(item) {
+        if (!item) {
+            return "potion";
+        }
+        if (item.spriteKey && itemSpriteLibrary[item.spriteKey]) {
+            return item.spriteKey;
+        }
+        if (item.id) {
+            if (itemSpriteLibrary[item.id]) {
+                return item.id;
+            }
+            if (item.id.includes("relic")) {
+                return "relic";
+            }
+            if (item.id.includes("sword")) {
+                return "sword";
+            }
+            if (item.id.includes("armor")) {
+                return "armor";
+            }
+        }
+        if (item.type && itemSpriteLibrary[item.type]) {
+            return item.type;
+        }
+        if (item.type === "quest" && item.id && item.id.includes("relic")) {
+            return "relic";
+        }
+        if (item.type === "equipment" && item.id && item.id.includes("sword")) {
+            return "sword";
+        }
+        if (item.type === "equipment" && item.id && item.id.includes("armor")) {
+            return "armor";
+        }
+        return "potion";
+    }
+
+    function resolveItemSprite(item) {
+        const key = resolveItemSpriteKey(item);
+        return itemSpriteLibrary[key] || itemSpriteLibrary.potion;
+    }
+
+    function createBlankFrame(width, height, fill = null) {
+        return Array.from({ length: height }, () => Array.from({ length: width }, () => fill));
+    }
+
+    function setPixel(frame, x, y, color) {
+        if (!frame || !frame[y]) {
+            return;
+        }
+        if (x < 0 || y < 0 || y >= frame.length || x >= frame[0].length) {
+            return;
+        }
+        frame[y][x] = color;
+    }
+
+    function fillRectInFrame(frame, startX, startY, width, height, color) {
+        for (let y = startY; y < startY + height; y += 1) {
+            for (let x = startX; x < startX + width; x += 1) {
+                setPixel(frame, x, y, color);
+            }
+        }
+    }
+
+    function drawFrame(frame, originX, originY, scale, flipHorizontal = false, opacity = 1) {
+        if (!ctx || !frame) {
+            return;
+        }
+
+        const height = frame.length;
+        const width = frame[0]?.length || 0;
+        if (width === 0 || height === 0) {
+            return;
+        }
+
+        const previousAlpha = ctx.globalAlpha;
+        if (opacity !== 1) {
+            ctx.globalAlpha = opacity;
+        }
+
+        for (let row = 0; row < height; row += 1) {
+            const pixels = frame[row];
+            for (let col = 0; col < width; col += 1) {
+                const color = pixels[col];
+                if (!color) {
+                    continue;
+                }
+
+                const targetCol = flipHorizontal ? width - 1 - col : col;
+                const drawX = originX + targetCol * scale;
+                const drawY = originY + row * scale;
+                ctx.fillStyle = color;
+                ctx.fillRect(drawX, drawY, scale, scale);
+            }
+        }
+
+        if (opacity !== 1) {
+            ctx.globalAlpha = previousAlpha;
+        }
+    }
+
+    function drawSprite(sprite, frameIndex, x, y, width, height, options = {}) {
+        if (!sprite || !sprite.frames || sprite.frames.length === 0) {
+            return;
+        }
+
+        const frames = sprite.frames;
+        const frame = frames[frameIndex % frames.length];
+        const scale = sprite.scale || 1;
+        const drawWidth = sprite.pixelWidth * scale;
+        const drawHeight = sprite.pixelHeight * scale;
+        const anchorX = options.anchorX ?? sprite.anchorX ?? 0.5;
+        const anchorY = options.anchorY ?? sprite.anchorY ?? 1;
+        const offsetX = (options.offsetX ?? sprite.offsetX ?? 0) * scale;
+        const offsetY = (options.offsetY ?? sprite.offsetY ?? 0) * scale;
+
+        const originX = x + width * anchorX - drawWidth * anchorX + offsetX;
+        const originY = y + height * anchorY - drawHeight * anchorY + offsetY;
+
+        drawFrame(frame, originX, originY, scale, options.flipHorizontal || false, options.opacity ?? 1);
+    }
+
+    function tintColor(hex, amount) {
+        const normalized = hex.replace("#", "");
+        if (normalized.length !== 6) {
+            return hex;
+        }
+
+        let r = parseInt(normalized.slice(0, 2), 16);
+        let g = parseInt(normalized.slice(2, 4), 16);
+        let b = parseInt(normalized.slice(4, 6), 16);
+
+        r = Math.max(0, Math.min(255, r + amount));
+        g = Math.max(0, Math.min(255, g + amount));
+        b = Math.max(0, Math.min(255, b + amount));
+
+        return `#${r.toString(16).padStart(2, "0")}${g
+            .toString(16)
+            .padStart(2, "0")}${b.toString(16).padStart(2, "0")}`;
+    }
+
+    function buildFrameSet(frames, options = {}) {
+        const height = frames[0]?.length || 0;
+        const width = height > 0 ? frames[0][0].length : 0;
+        return {
+            frames,
+            pixelWidth: width,
+            pixelHeight: height,
+            scale: options.scale ?? 1,
+            anchorX: options.anchorX ?? 0.5,
+            anchorY: options.anchorY ?? 0.5,
+            offsetX: options.offsetX ?? 0,
+            offsetY: options.offsetY ?? 0
+        };
+    }
+
+    function createPixelArt(frameCount) {
+        const hero = buildFrameSet(createHeroFrames(), { scale: 2, anchorX: 0.5, anchorY: 1 });
+        const brute = buildFrameSet(createBruteFrames(), { scale: 2, anchorX: 0.5, anchorY: 1 });
+        const wisp = buildFrameSet(createWispFrames(), { scale: 2, anchorX: 0.5, anchorY: 1 });
+        const elder = buildFrameSet(createElderFrames(), { scale: 2, anchorX: 0.5, anchorY: 1 });
+        const scholar = buildFrameSet(createScholarFrames(), { scale: 2, anchorX: 0.5, anchorY: 1 });
+        const potion = buildFrameSet(createPotionFrames(), { scale: 2, anchorX: 0.5, anchorY: 0.5 });
+        const sword = buildFrameSet(createSwordFrames(), { scale: 2, anchorX: 0.5, anchorY: 0.5 });
+        const armor = buildFrameSet(createArmorFrames(), { scale: 2, anchorX: 0.5, anchorY: 0.5 });
+        const relic = buildFrameSet(createRelicFrames(), { scale: 2, anchorX: 0.5, anchorY: 0.5 });
+        const floor = buildFrameSet(createFloorFrames(), { scale: 2, anchorX: 0, anchorY: 0 });
+        const wall = buildFrameSet(createWallFrames(), { scale: 2, anchorX: 0, anchorY: 0 });
+        const slash = buildFrameSet(createSlashFrames(), { scale: 2, anchorX: 0.5, anchorY: 0.5 });
+
+        return {
+            sprites: {
+                player: { hero },
+                enemies: { brute, wisp },
+                npcs: { elder, scholar },
+                items: { potion, sword, armor, relic }
+            },
+            tiles: { floor, wall },
+            effects: { slash }
+        };
+
+        function createHeroFrames() {
+            const width = 16;
+            const height = 16;
+            const baseHair = "#3d2c8d";
+            const hairHighlight = "#5c43c5";
+            const skin = "#f0c5a0";
+            const skinShadow = "#d7a982";
+            const tunic = "#2f6fe0";
+            const tunicShadow = "#244fb3";
+            const trim = "#ffd85a";
+            const boots = "#4a3626";
+            const bootsShadow = "#352417";
+
+            const frames = [];
+
+            for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
+                const frame = createBlankFrame(width, height, null);
+                const walkCycle = Math.sin((frameIndex / frameCount) * Math.PI * 2);
+                const armCycle = Math.sin((frameIndex / frameCount) * Math.PI * 2 + Math.PI / 2);
+                const bobOffset = Math.round(Math.sin((frameIndex / frameCount) * Math.PI * 2) * 1);
+                const leftLegOffset = Math.round(walkCycle * 2);
+                const rightLegOffset = -Math.round(walkCycle * 2);
+                const leftArmOffset = Math.round(armCycle * 2);
+                const rightArmOffset = -Math.round(armCycle * 2);
+
+                // Hair and head
+                fillRectInFrame(frame, 5, 1 + bobOffset, 6, 1, hairHighlight);
+                fillRectInFrame(frame, 5, 2 + bobOffset, 6, 2, baseHair);
+                fillRectInFrame(frame, 5, 4 + bobOffset, 6, 3, skin);
+                fillRectInFrame(frame, 6, 5 + bobOffset, 4, 2, skinShadow);
+                setPixel(frame, 6, 5 + bobOffset, skin);
+                setPixel(frame, 9, 5 + bobOffset, skin);
+                setPixel(frame, 6, 6 + bobOffset, "#000000");
+                setPixel(frame, 9, 6 + bobOffset, "#000000");
+
+                // Beard/shadow under chin
+                fillRectInFrame(frame, 5, 7 + bobOffset, 6, 1, skinShadow);
+
+                // Torso
+                fillRectInFrame(frame, 5, 8 + bobOffset, 6, 1, trim);
+                fillRectInFrame(frame, 5, 9 + bobOffset, 6, 3, tunic);
+                fillRectInFrame(frame, 5, 10 + bobOffset, 3, 2, tunicShadow);
+
+                // Belt
+                fillRectInFrame(frame, 5, 12 + bobOffset, 6, 1, trim);
+
+                // Legs
+                fillRectInFrame(frame, 6 + leftLegOffset, 13 + bobOffset, 2, 2, bootsShadow);
+                fillRectInFrame(frame, 6 + leftLegOffset, 15 + bobOffset, 2, 1, boots);
+                fillRectInFrame(frame, 8 + rightLegOffset, 13 + bobOffset, 2, 2, boots);
+                fillRectInFrame(frame, 8 + rightLegOffset, 15 + bobOffset, 2, 1, bootsShadow);
+
+                // Arms
+                fillRectInFrame(frame, 4 + leftArmOffset, 9 + bobOffset, 1, 3, tunicShadow);
+                fillRectInFrame(frame, 11 + rightArmOffset, 9 + bobOffset, 1, 3, tunic);
+                setPixel(frame, 4 + leftArmOffset, 12 + bobOffset, skin);
+                setPixel(frame, 11 + rightArmOffset, 12 + bobOffset, skinShadow);
+
+                frames.push(frame);
+            }
+
+            return frames;
+        }
+
+        function createBruteFrames() {
+            const width = 16;
+            const height = 16;
+            const armor = "#6f4f28";
+            const armorShadow = "#53371c";
+            const cloth = "#9b4f4f";
+            const eyes = "#ffbe3b";
+            const horn = "#c7c1b0";
+
+            const frames = [];
+
+            for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
+                const frame = createBlankFrame(width, height, null);
+                const sway = Math.sin((frameIndex / frameCount) * Math.PI * 2);
+                const stomp = Math.sin((frameIndex / frameCount) * Math.PI * 2 + Math.PI / 2);
+                const torsoShift = Math.round(sway * 1);
+                const hornTilt = Math.round(sway * 1);
+                const step = Math.round(stomp * 2);
+
+                // Head and horns
+                fillRectInFrame(frame, 4 + torsoShift, 1, 8, 4, armorShadow);
+                setPixel(frame, 3 + torsoShift, 1 + hornTilt, horn);
+                setPixel(frame, 12 + torsoShift, 1 - hornTilt, horn);
+                setPixel(frame, 6 + torsoShift, 3, eyes);
+                setPixel(frame, 9 + torsoShift, 3, eyes);
+
+                // Mouth line
+                fillRectInFrame(frame, 6 + torsoShift, 4, 4, 1, "#2a1b10");
+
+                // Torso armor
+                fillRectInFrame(frame, 4 + torsoShift, 5, 8, 5, armor);
+                fillRectInFrame(frame, 4 + torsoShift, 8, 8, 2, armorShadow);
+
+                // Cloth
+                fillRectInFrame(frame, 5 + torsoShift, 10, 6, 2, cloth);
+
+                // Legs
+                fillRectInFrame(frame, 5 + torsoShift, 12, 3, 2, armorShadow);
+                fillRectInFrame(frame, 5 + torsoShift, 14, 3, 1, armor);
+                fillRectInFrame(frame, 8 + torsoShift, 12, 3, 2, armor);
+                fillRectInFrame(frame, 8 + torsoShift, 14, 3, 1, armorShadow);
+
+                // Arms swinging
+                fillRectInFrame(frame, 3 + torsoShift - step, 6, 1, 5, armorShadow);
+                fillRectInFrame(frame, 12 + torsoShift + step, 6, 1, 5, armor);
+
+                frames.push(frame);
+            }
+
+            return frames;
+        }
+
+        function createWispFrames() {
+            const width = 16;
+            const height = 16;
+            const base = "#2ad4ff";
+            const core = "#a6f7ff";
+            const aura = "#12304f";
+
+            const frames = [];
+
+            for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
+                const frame = createBlankFrame(width, height, null);
+                const pulse = (Math.sin((frameIndex / frameCount) * Math.PI * 2) + 1) / 2;
+                const radius = 5 + Math.round(pulse * 1.5);
+                const offset = Math.round(Math.sin((frameIndex / frameCount) * Math.PI * 2) * 1);
+
+                for (let y = 0; y < height; y += 1) {
+                    for (let x = 0; x < width; x += 1) {
+                        const dx = x - 8;
+                        const dy = y - (8 + offset);
+                        const distance = Math.sqrt(dx * dx + dy * dy);
+                        if (distance <= radius - 2) {
+                            setPixel(frame, x, y, core);
+                        } else if (distance <= radius) {
+                            setPixel(frame, x, y, base);
+                        } else if (distance <= radius + 1) {
+                            setPixel(frame, x, y, pulse > 0.5 ? tintColor(base, -60) : aura);
+                        }
+                    }
+                }
+
+                frames.push(frame);
+            }
+
+            return frames;
+        }
+
+        function createElderFrames() {
+            const width = 16;
+            const height = 16;
+            const robe = "#7a90d9";
+            const robeShadow = "#5668b1";
+            const beard = "#f3f1e6";
+            const face = "#dfc2a2";
+            const staff = "#8b5a2b";
+            const gem = "#8fe7ff";
+
+            const frames = [];
+
+            for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
+                const frame = createBlankFrame(width, height, null);
+                const sway = Math.sin((frameIndex / frameCount) * Math.PI * 2);
+                const robeShift = Math.round(sway);
+
+                // Hood and head
+                fillRectInFrame(frame, 5, 1, 6, 2, robeShadow);
+                fillRectInFrame(frame, 6, 3, 4, 1, robe);
+                fillRectInFrame(frame, 6, 4, 4, 2, face);
+                fillRectInFrame(frame, 6, 6, 4, 2, beard);
+                setPixel(frame, 6, 5, "#000000");
+                setPixel(frame, 9, 5, "#000000");
+
+                // Staff
+                fillRectInFrame(frame, 3 + robeShift, 4, 1, 9, staff);
+                setPixel(frame, 3 + robeShift, 3, gem);
+
+                // Robe body
+                fillRectInFrame(frame, 5 + robeShift, 8, 6, 6, robe);
+                fillRectInFrame(frame, 5 + robeShift, 10, 6, 2, robeShadow);
+                fillRectInFrame(frame, 5 + robeShift, 12, 6, 1, robe);
+
+                frames.push(frame);
+            }
+
+            return frames;
+        }
+
+        function createScholarFrames() {
+            const width = 16;
+            const height = 16;
+            const robe = "#c188c9";
+            const robeShadow = "#9b65a5";
+            const hair = "#3b1b59";
+            const face = "#f1d0b2";
+            const book = "#f6e37b";
+
+            const frames = [];
+
+            for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
+                const frame = createBlankFrame(width, height, null);
+                const bob = Math.sin((frameIndex / frameCount) * Math.PI * 2) * 0.7;
+                const bobOffset = Math.round(bob);
+
+                fillRectInFrame(frame, 5, 1 + bobOffset, 6, 2, hair);
+                fillRectInFrame(frame, 6, 3 + bobOffset, 4, 2, face);
+                setPixel(frame, 6, 4 + bobOffset, "#000000");
+                setPixel(frame, 9, 4 + bobOffset, "#000000");
+                fillRectInFrame(frame, 6, 5 + bobOffset, 4, 1, face);
+
+                // Collar
+                fillRectInFrame(frame, 6, 6 + bobOffset, 4, 1, robeShadow);
+
+                // Book held in hands
+                fillRectInFrame(frame, 3, 9 + bobOffset, 4, 3, book);
+                fillRectInFrame(frame, 3, 9 + bobOffset, 4, 1, tintColor(book, -40));
+
+                fillRectInFrame(frame, 5, 7 + bobOffset, 6, 6, robe);
+                fillRectInFrame(frame, 5, 9 + bobOffset, 6, 2, robeShadow);
+
+                frames.push(frame);
+            }
+
+            return frames;
+        }
+
+        function createPotionFrames() {
+            const width = 12;
+            const height = 12;
+            const glass = "#b0eaff";
+            const liquid = "#4ed2ff";
+            const highlight = "#ffffff";
+
+            const frames = [];
+
+            for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
+                const frame = createBlankFrame(width, height, null);
+                const wave = (Math.sin((frameIndex / frameCount) * Math.PI * 2) + 1) / 2;
+                const liquidHeight = 5 + Math.round(wave * 2);
+
+                // Bottle outline
+                fillRectInFrame(frame, 4, 0, 4, 1, glass);
+                fillRectInFrame(frame, 3, 1, 6, 1, tintColor(glass, -30));
+                fillRectInFrame(frame, 2, 2, 8, 6, tintColor(glass, -10));
+                fillRectInFrame(frame, 2, 2, 8, liquidHeight, liquid);
+                setPixel(frame, 3, 2, highlight);
+                setPixel(frame, 7, 3, highlight);
+
+                frames.push(frame);
+            }
+
+            return frames;
+        }
+
+        function createSwordFrames() {
+            const width = 12;
+            const height = 12;
+            const blade = "#d2d7e0";
+            const hilt = "#8b5a2b";
+            const gem = "#ffd966";
+
+            const frames = [];
+
+            for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
+                const frame = createBlankFrame(width, height, null);
+                const sparklePos = (frameIndex % frameCount) / frameCount;
+                const highlightRow = Math.floor(sparklePos * 6) + 2;
+
+                // Blade
+                fillRectInFrame(frame, 5, 1, 2, 7, blade);
+                fillRectInFrame(frame, 5, highlightRow, 2, 1, tintColor(blade, 40));
+
+                // Crossguard and handle
+                fillRectInFrame(frame, 3, 8, 6, 1, hilt);
+                fillRectInFrame(frame, 5, 9, 2, 3, tintColor(hilt, -10));
+                setPixel(frame, 6, 11, gem);
+
+                frames.push(frame);
+            }
+
+            return frames;
+        }
+
+        function createArmorFrames() {
+            const width = 12;
+            const height = 12;
+            const metal = "#b0b8c4";
+            const shadow = "#7d8591";
+            const glow = "#5ec2ff";
+
+            const frames = [];
+
+            for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
+                const frame = createBlankFrame(width, height, null);
+                const pulse = (Math.sin((frameIndex / frameCount) * Math.PI * 2) + 1) / 2;
+
+                fillRectInFrame(frame, 2, 2, 8, 2, metal);
+                fillRectInFrame(frame, 2, 4, 8, 4, shadow);
+                fillRectInFrame(frame, 3, 4, 6, 3, metal);
+                fillRectInFrame(frame, 4, 5, 4, 1, tintColor(metal, 30));
+                const glowStrength = pulse > 0.5 ? glow : tintColor(glow, -40);
+                setPixel(frame, 4, 3, glowStrength);
+                setPixel(frame, 7, 3, glowStrength);
+
+                frames.push(frame);
+            }
+
+            return frames;
+        }
+
+        function createRelicFrames() {
+            const width = 12;
+            const height = 12;
+            const core = "#b26bff";
+            const aura = "#f4d4ff";
+
+            const frames = [];
+
+            for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
+                const frame = createBlankFrame(width, height, null);
+                const shimmer = (Math.sin((frameIndex / frameCount) * Math.PI * 2) + 1) / 2;
+                const radius = 3 + Math.round(shimmer * 2);
+
+                for (let y = 0; y < height; y += 1) {
+                    for (let x = 0; x < width; x += 1) {
+                        const dx = x - width / 2;
+                        const dy = y - height / 2;
+                        const distance = Math.sqrt(dx * dx + dy * dy);
+                        if (distance <= radius - 1) {
+                            setPixel(frame, x, y, core);
+                        } else if (distance <= radius + 0.5) {
+                            setPixel(frame, x, y, aura);
+                        }
+                    }
+                }
+
+                frames.push(frame);
+            }
+
+            return frames;
+        }
+
+        function createFloorFrames() {
+            const width = 16;
+            const height = 16;
+            const base = "#1b1b1b";
+            const highlight = "#262626";
+            const sparkle = "#2f4858";
+
+            const frames = [];
+
+            for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
+                const frame = createBlankFrame(width, height, base);
+                const offset = frameIndex % frameCount;
+
+                for (let y = 0; y < height; y += 1) {
+                    for (let x = 0; x < width; x += 1) {
+                        if ((x + y + offset) % 6 === 0) {
+                            setPixel(frame, x, y, highlight);
+                        }
+                        if ((x * 3 + y * 5 + offset) % 19 === 0) {
+                            setPixel(frame, x, y, sparkle);
+                        }
+                    }
+                }
+
+                frames.push(frame);
+            }
+
+            return frames;
+        }
+
+        function createWallFrames() {
+            const width = 16;
+            const height = 16;
+            const stone = "#3d3d3d";
+            const mortar = "#2a2a2a";
+            const shine = "#515151";
+
+            const frames = [];
+
+            for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
+                const frame = createBlankFrame(width, height, mortar);
+                const shineOffset = frameIndex % frameCount;
+
+                for (let y = 0; y < height; y += 1) {
+                    for (let x = 0; x < width; x += 1) {
+                        if ((Math.floor(x / 4) + Math.floor(y / 4)) % 2 === 0) {
+                            setPixel(frame, x, y, stone);
+                        }
+                        if ((x + shineOffset) % 8 === 0 && y % 4 === 0) {
+                            setPixel(frame, x, y, shine);
+                        }
+                    }
+                }
+
+                frames.push(frame);
+            }
+
+            return frames;
+        }
+
+        function createSlashFrames() {
+            const width = 16;
+            const height = 16;
+            const core = "#ffbf3d";
+            const glow = "#ffe9a3";
+            const ember = "#f26e1b";
+
+            const frames = [];
+
+            for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
+                const frame = createBlankFrame(width, height, null);
+                const progress = frameIndex / (frameCount - 1 || 1);
+                const rays = 8;
+                const radius = 3 + progress * 5;
+
+                for (let ray = 0; ray < rays; ray += 1) {
+                    const angle = (Math.PI * 2 * ray) / rays + progress * 0.4;
+                    for (let step = 0; step < radius; step += 0.5) {
+                        const px = Math.round(width / 2 + Math.cos(angle) * step);
+                        const py = Math.round(height / 2 + Math.sin(angle) * step);
+                        if (step < radius * 0.4) {
+                            setPixel(frame, px, py, core);
+                        } else if (step < radius * 0.8) {
+                            setPixel(frame, px, py, glow);
+                        } else {
+                            setPixel(frame, px, py, ember);
+                        }
+                    }
+                }
+
+                frames.push(frame);
+            }
+
+            return frames;
+        }
+    }
 
     function clearLoadingText() {
         const loadingElement = document.getElementById("loading");
@@ -371,13 +1057,16 @@
             moveX += 1;
         }
 
-        if (moveX !== 0 || moveY !== 0) {
+        const isMoving = moveX !== 0 || moveY !== 0;
+        if (isMoving) {
             const length = Math.hypot(moveX, moveY);
             moveX /= length;
             moveY /= length;
             player.direction.x = moveX;
             player.direction.y = moveY;
         }
+
+        player.isMoving = isMoving;
 
         const deltaX = moveX * player.speed * delta;
         const deltaY = moveY * player.speed * delta;
@@ -395,34 +1084,35 @@
     }
 
     function spawnEnemies() {
-        const enemyTemplate = {
-            width: 26,
-            height: 26,
-            speed: 70,
-            hp: 60,
-            contactDamage: 8,
-            damageInterval: 0.8,
-            damageTimer: 0
-        };
-
         const spawnPoints = [
             { x: tileSize * 10, y: tileSize * 6 },
             { x: tileSize * 15, y: tileSize * 12 },
-            { x: tileSize * 5, y: tileSize * 14 }
+            { x: tileSize * 5, y: tileSize * 14 },
+            { x: tileSize * 17, y: tileSize * 8 }
         ];
 
-        spawnPoints.forEach((point) => {
+        const enemyTypes = Object.keys(enemyArchetypes);
+        spawnPoints.forEach((point, index) => {
+            const archetype = enemyArchetypes[enemyTypes[index % enemyTypes.length]];
+            if (!archetype) {
+                return;
+            }
+
             enemies.push({
                 x: point.x,
                 y: point.y,
-                width: enemyTemplate.width,
-                height: enemyTemplate.height,
-                speed: enemyTemplate.speed,
-                hp: enemyTemplate.hp,
-                contactDamage: enemyTemplate.contactDamage,
-                damageInterval: enemyTemplate.damageInterval,
-                damageTimer: enemyTemplate.damageTimer,
-                expValue: 50
+                width: archetype.width,
+                height: archetype.height,
+                speed: archetype.speed,
+                hp: archetype.hp,
+                maxHp: archetype.hp,
+                contactDamage: archetype.contactDamage,
+                damageInterval: archetype.damageInterval,
+                damageTimer: 0,
+                expValue: archetype.expValue,
+                sprite: archetype.sprite,
+                spriteKey: archetype.spriteKey,
+                type: archetype.type
             });
         });
     }
@@ -538,19 +1228,22 @@
             return;
         }
 
+        const frameIndex = Math.floor((animationTimer * (animationSpeed / 2)) % animationFrameCount);
+        const floorFrame = tileAnimations.floor.frames[frameIndex];
+        const wallFrame = tileAnimations.wall.frames[frameIndex];
+        const floorScale = tileSize / tileAnimations.floor.pixelWidth;
+        const wallScale = tileSize / tileAnimations.wall.pixelWidth;
+
         for (let row = 0; row < mapRows; row += 1) {
             for (let col = 0; col < mapCols; col += 1) {
                 const tile = map[row][col];
                 const x = col * tileSize;
                 const y = row * tileSize;
-
                 if (tile === 1) {
-                    ctx.fillStyle = "#3a3a3a";
+                    drawFrame(wallFrame, x, y, wallScale);
                 } else {
-                    ctx.fillStyle = "#1a1a1a";
+                    drawFrame(floorFrame, x, y, floorScale);
                 }
-
-                ctx.fillRect(x, y, tileSize, tileSize);
             }
         }
     }
@@ -561,10 +1254,26 @@
         }
 
         const attackBox = computeAttackHitbox();
-        ctx.fillStyle = "rgba(255, 255, 255, 0.2)";
-        ctx.fillRect(attackBox.x, attackBox.y, attackBox.width, attackBox.height);
-        ctx.strokeStyle = "rgba(255, 255, 255, 0.4)";
-        ctx.strokeRect(attackBox.x, attackBox.y, attackBox.width, attackBox.height);
+        const slashSprite = effectSprites.slash;
+        if (slashSprite) {
+            const normalized = Math.max(
+                0,
+                Math.min(1, 1 - player.attackTimer / player.attackDuration)
+            );
+            const frameIndex = Math.min(
+                slashSprite.frames.length - 1,
+                Math.floor(normalized * (slashSprite.frames.length - 1))
+            );
+            drawSprite(slashSprite, frameIndex, attackBox.x, attackBox.y, attackBox.width, attackBox.height, {
+                anchorX: 0.5,
+                anchorY: 0.5
+            });
+        } else {
+            ctx.fillStyle = "rgba(255, 255, 255, 0.2)";
+            ctx.fillRect(attackBox.x, attackBox.y, attackBox.width, attackBox.height);
+            ctx.strokeStyle = "rgba(255, 255, 255, 0.4)";
+            ctx.strokeRect(attackBox.x, attackBox.y, attackBox.width, attackBox.height);
+        }
     }
 
     function drawPlayer() {
@@ -572,12 +1281,24 @@
             return;
         }
 
-        ctx.fillStyle = "#ffcc00";
-        ctx.fillRect(player.x, player.y, player.width, player.height);
-
-        ctx.strokeStyle = "#000000";
-        ctx.lineWidth = 2;
-        ctx.strokeRect(player.x, player.y, player.width, player.height);
+        const sprite = player.sprite || heroSprite;
+        const moving = player.isMoving;
+        if (sprite) {
+            const speedMultiplier = moving ? animationSpeed : animationSpeed / 3;
+            const frameIndex = Math.floor((animationTimer * speedMultiplier) % animationFrameCount);
+            const facingLeft = player.direction.x < 0 && Math.abs(player.direction.x) >= Math.abs(player.direction.y);
+            drawSprite(sprite, frameIndex, player.x, player.y, player.width, player.height, {
+                anchorX: 0.5,
+                anchorY: 1,
+                flipHorizontal: facingLeft
+            });
+        } else {
+            ctx.fillStyle = "#ffcc00";
+            ctx.fillRect(player.x, player.y, player.width, player.height);
+            ctx.strokeStyle = "#000000";
+            ctx.lineWidth = 2;
+            ctx.strokeRect(player.x, player.y, player.width, player.height);
+        }
     }
 
     function drawEnemies() {
@@ -585,12 +1306,33 @@
             return;
         }
 
+        const frameIndex = Math.floor((animationTimer * animationSpeed) % animationFrameCount);
         enemies.forEach((enemy) => {
-            ctx.fillStyle = "#a83232";
-            ctx.fillRect(enemy.x, enemy.y, enemy.width, enemy.height);
-            ctx.strokeStyle = "#000000";
-            ctx.lineWidth = 2;
-            ctx.strokeRect(enemy.x, enemy.y, enemy.width, enemy.height);
+            const sprite = enemy.sprite || enemySpriteLibrary[enemy.spriteKey] || enemySpriteLibrary.brute;
+            if (sprite) {
+                const facingLeft = enemy.x + enemy.width / 2 > player.x + player.width / 2;
+                drawSprite(sprite, frameIndex, enemy.x, enemy.y, enemy.width, enemy.height, {
+                    anchorX: 0.5,
+                    anchorY: 1,
+                    flipHorizontal: facingLeft
+                });
+            } else {
+                ctx.fillStyle = "#a83232";
+                ctx.fillRect(enemy.x, enemy.y, enemy.width, enemy.height);
+                ctx.strokeStyle = "#000000";
+                ctx.lineWidth = 2;
+                ctx.strokeRect(enemy.x, enemy.y, enemy.width, enemy.height);
+            }
+
+            if (enemy.hp < enemy.maxHp) {
+                const barWidth = enemy.width;
+                const barHeight = 4;
+                const ratio = Math.max(0, Math.min(1, enemy.hp / enemy.maxHp));
+                ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
+                ctx.fillRect(enemy.x, enemy.y - barHeight - 2, barWidth, barHeight);
+                ctx.fillStyle = "#ff5555";
+                ctx.fillRect(enemy.x, enemy.y - barHeight - 2, barWidth * ratio, barHeight);
+            }
         });
     }
 
@@ -599,11 +1341,20 @@
             return;
         }
 
+        const frameIndex = Math.floor((animationTimer * animationSpeed) % animationFrameCount);
         itemsOnMap.forEach((item) => {
-            ctx.fillStyle = item.color;
-            ctx.fillRect(item.x, item.y, item.width, item.height);
-            ctx.strokeStyle = "#1a1a1a";
-            ctx.strokeRect(item.x, item.y, item.width, item.height);
+            const sprite = item.sprite || resolveItemSprite(item);
+            if (sprite) {
+                drawSprite(sprite, frameIndex, item.x, item.y, item.width, item.height, {
+                    anchorX: 0,
+                    anchorY: 0
+                });
+            } else {
+                ctx.fillStyle = item.color;
+                ctx.fillRect(item.x, item.y, item.width, item.height);
+                ctx.strokeStyle = "#1a1a1a";
+                ctx.strokeRect(item.x, item.y, item.width, item.height);
+            }
         });
     }
 
@@ -640,6 +1391,11 @@
         ctx.fillStyle = "#4d7cff";
         ctx.fillRect(x, xpBarY, Math.min(1, Math.max(0, xpRatio)) * barWidth, barHeight);
 
+        const glossWidth = Math.max(12, barWidth * 0.15);
+        ctx.fillStyle = "rgba(255, 255, 255, 0.1)";
+        ctx.fillRect(x, y, glossWidth, barHeight);
+        ctx.fillRect(x, xpBarY, glossWidth, barHeight);
+
         ctx.strokeStyle = "#ffffff";
         ctx.strokeRect(x, xpBarY, barWidth, barHeight);
 
@@ -649,6 +1405,28 @@
         ctx.fillText(`HP: ${Math.ceil(player.hp)} / ${player.maxHp}`, x, textStartY);
         ctx.fillText(`Lvl ${player.level}  EXP: ${player.exp} / ${player.expToNextLevel}`, x, textStartY + 14);
         ctx.fillText("[I] Inventory  [H] Use Potion", x, textStartY + 28);
+
+        const heroIconSprite = player.sprite || heroSprite;
+        if (heroIconSprite) {
+            const iconFrame = Math.floor((animationTimer * (animationSpeed / 3)) % animationFrameCount);
+            const iconSize = 32;
+            drawSprite(heroIconSprite, iconFrame, x - iconSize - 12, y + barHeight, iconSize, iconSize, {
+                anchorX: 0,
+                anchorY: 1
+            });
+        }
+
+        const potionSprite = itemSpriteLibrary.potion;
+        if (potionSprite) {
+            const potionFrame = Math.floor((animationTimer * animationSpeed) % animationFrameCount);
+            const iconSize = 20;
+            const iconX = x + ctx.measureText("[I] Inventory  ").width + 12;
+            const iconY = textStartY + 26;
+            drawSprite(potionSprite, potionFrame, iconX, iconY, iconSize, iconSize, {
+                anchorX: 0,
+                anchorY: 0.5
+            });
+        }
     }
 
     function determineTrackedQuest() {
@@ -802,10 +1580,22 @@
             ctx.fillStyle = "rgba(60, 60, 60, 0.9)";
             ctx.fillRect(slotX - 4, slotY - 4, slotSize + 8, slotSize + 8);
 
-            ctx.fillStyle = item.color || "#cccccc";
+            ctx.fillStyle = "rgba(26, 26, 26, 0.85)";
             ctx.fillRect(slotX, slotY, slotSize, slotSize);
             ctx.strokeStyle = "#000000";
             ctx.strokeRect(slotX, slotY, slotSize, slotSize);
+
+            const sprite = resolveItemSprite(item);
+            if (sprite) {
+                const frameIndex = Math.floor((animationTimer * animationSpeed) % animationFrameCount);
+                drawSprite(sprite, frameIndex, slotX, slotY, slotSize, slotSize, {
+                    anchorX: 0.5,
+                    anchorY: 0.5
+                });
+            } else {
+                ctx.fillStyle = item.color || "#cccccc";
+                ctx.fillRect(slotX + 6, slotY + 6, slotSize - 12, slotSize - 12);
+            }
 
             if (item.type === "equipment" && item.equipped) {
                 ctx.strokeStyle = "#32cd32";
@@ -834,12 +1624,21 @@
             return;
         }
 
+        const frameIndex = Math.floor((animationTimer * (animationSpeed / 2)) % animationFrameCount);
         npcs.forEach((npc) => {
-            ctx.fillStyle = npc.color;
-            ctx.fillRect(npc.x, npc.y, npc.width, npc.height);
-            ctx.strokeStyle = "#000000";
-            ctx.lineWidth = 2;
-            ctx.strokeRect(npc.x, npc.y, npc.width, npc.height);
+            const sprite = npc.sprite || npcSpriteLibrary[npc.spriteKey];
+            if (sprite) {
+                drawSprite(sprite, frameIndex, npc.x, npc.y, npc.width, npc.height, {
+                    anchorX: 0.5,
+                    anchorY: 1
+                });
+            } else {
+                ctx.fillStyle = npc.color || "#888888";
+                ctx.fillRect(npc.x, npc.y, npc.width, npc.height);
+                ctx.strokeStyle = "#000000";
+                ctx.lineWidth = 2;
+                ctx.strokeRect(npc.x, npc.y, npc.width, npc.height);
+            }
         });
     }
 
@@ -852,9 +1651,9 @@
         drawMap();
         drawItems();
         drawNpcs();
-        drawAttackBox();
         drawEnemies();
         drawPlayer();
+        drawAttackBox();
         drawHud();
         drawQuestTracker();
         drawInteractionPrompt();
@@ -864,6 +1663,10 @@
     }
 
     function update(delta) {
+        animationTimer += delta;
+        if (animationTimer > 1000) {
+            animationTimer = animationTimer % 1000;
+        }
         movePlayer(delta);
         updateAttack(delta);
         updateEnemies(delta);
@@ -907,7 +1710,8 @@
             color: item.color,
             healAmount: item.healAmount,
             bonuses: item.bonuses,
-            equipped: false
+            equipped: false,
+            spriteKey: resolveItemSpriteKey(item)
         };
         itemsOnMap.splice(index, 1);
         inventory.push(inventoryItem);
@@ -1173,7 +1977,8 @@
             color: item.color,
             healAmount: item.healAmount,
             bonuses: item.bonuses,
-            equipped: Boolean(item.equipped)
+            equipped: Boolean(item.equipped),
+            spriteKey: item.spriteKey
         }));
     }
 
@@ -1186,6 +1991,7 @@
             color: item.color,
             healAmount: item.healAmount,
             bonuses: item.bonuses,
+            spriteKey: item.spriteKey,
             x: item.x,
             y: item.y,
             width: item.width,
@@ -1204,7 +2010,9 @@
             contactDamage: enemy.contactDamage,
             damageInterval: enemy.damageInterval,
             damageTimer: enemy.damageTimer,
-            expValue: enemy.expValue
+            expValue: enemy.expValue,
+            spriteKey: enemy.spriteKey,
+            type: enemy.type
         }));
     }
 
@@ -1237,7 +2045,8 @@
             exp: player.exp,
             level: player.level,
             expToNextLevel: player.expToNextLevel,
-            direction: { x: player.direction.x, y: player.direction.y }
+            direction: { x: player.direction.x, y: player.direction.y },
+            spriteKey: player.spriteKey
         };
     }
 
@@ -1317,6 +2126,10 @@
             player.expToNextLevel = data.player.expToNextLevel ?? player.expToNextLevel;
             player.direction.x = data.player.direction?.x ?? player.direction.x;
             player.direction.y = data.player.direction?.y ?? player.direction.y;
+            if (data.player.spriteKey) {
+                player.spriteKey = data.player.spriteKey;
+            }
+            player.sprite = pixelArtLibrary.sprites.player[player.spriteKey] || heroSprite;
 
             const savedInventory = Array.isArray(data.inventory) ? data.inventory : [];
             inventory.length = 0;
@@ -1329,13 +2142,17 @@
                     color: item.color,
                     healAmount: item.healAmount,
                     bonuses: item.bonuses,
-                    equipped: Boolean(item.equipped)
+                    equipped: Boolean(item.equipped),
+                    spriteKey: resolveItemSpriteKey(item)
                 });
             });
 
             if (Array.isArray(data.itemsOnMap)) {
                 itemsOnMap.length = 0;
                 data.itemsOnMap.forEach((item) => {
+                    const spriteKey = resolveItemSpriteKey(item);
+                    const sprite = resolveItemSprite({ ...item, spriteKey });
+                    const displaySize = sprite ? sprite.pixelWidth * sprite.scale : item.width || 18;
                     itemsOnMap.push({
                         id: item.id,
                         name: item.name,
@@ -1344,10 +2161,12 @@
                         color: item.color,
                         healAmount: item.healAmount,
                         bonuses: item.bonuses,
+                        spriteKey,
+                        sprite,
                         x: item.x,
                         y: item.y,
-                        width: item.width,
-                        height: item.height
+                        width: displaySize,
+                        height: displaySize
                     });
                 });
             }
@@ -1355,17 +2174,26 @@
             const savedEnemies = Array.isArray(data.enemies) ? data.enemies : [];
             enemies.length = 0;
             savedEnemies.forEach((enemy) => {
+                const spriteKey = enemy.spriteKey || enemy.type || "brute";
+                const archetype = enemyArchetypes[spriteKey] || enemyArchetypes[enemy.type];
+                const sprite = enemySpriteLibrary[spriteKey] || archetype?.sprite || enemySpriteLibrary.brute;
+                const width = typeof enemy.width === "number" ? enemy.width : sprite.pixelWidth * (sprite.scale || 1);
+                const height = typeof enemy.height === "number" ? enemy.height : sprite.pixelHeight * (sprite.scale || 1);
                 enemies.push({
                     x: enemy.x,
                     y: enemy.y,
-                    width: enemy.width,
-                    height: enemy.height,
-                    speed: enemy.speed,
-                    hp: enemy.hp,
-                    contactDamage: enemy.contactDamage,
-                    damageInterval: enemy.damageInterval,
+                    width,
+                    height,
+                    speed: enemy.speed ?? archetype?.speed ?? 70,
+                    hp: enemy.hp ?? archetype?.hp ?? 60,
+                    maxHp: enemy.maxHp ?? archetype?.hp ?? enemy.hp,
+                    contactDamage: enemy.contactDamage ?? archetype?.contactDamage ?? 6,
+                    damageInterval: enemy.damageInterval ?? archetype?.damageInterval ?? 0.8,
                     damageTimer: enemy.damageTimer ?? 0,
-                    expValue: enemy.expValue
+                    expValue: enemy.expValue ?? archetype?.expValue ?? 50,
+                    spriteKey,
+                    sprite,
+                    type: enemy.type || archetype?.type || spriteKey
                 });
             });
 
