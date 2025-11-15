@@ -205,7 +205,8 @@ function advanceEnemyAnimation(enemy, dt) {
 function handleRegen(enemy, dt) {
   const regen = enemy.abilities?.regen;
   if (!regen) return;
-  enemy.abilityTimers.regenTick = (enemy.abilityTimers.regenTick ?? regen.interval || 1000) - dt;
+  const regenInterval = regen.interval ?? 1000;
+  enemy.abilityTimers.regenTick = (enemy.abilityTimers.regenTick ?? regenInterval) - dt;
   if (enemy.abilityTimers.regenTick <= 0) {
     enemy.stats.hp = Math.min(enemy.stats.maxHp, enemy.stats.hp + (regen.amount || 2));
     enemy.abilityTimers.regenTick += regen.interval || 1000;
@@ -215,7 +216,8 @@ function handleRegen(enemy, dt) {
 function handleDash(enemy, dt, dist) {
   const dash = enemy.abilities?.dash;
   if (!dash) return enemy.effects.dashBoost ? enemy.effects.dashBoost : 1;
-  enemy.abilityTimers.dash = (enemy.abilityTimers.dash ?? dash.cooldown || 4000) - dt;
+  const dashCooldown = dash.cooldown ?? 4000;
+  enemy.abilityTimers.dash = (enemy.abilityTimers.dash ?? dashCooldown) - dt;
   if (enemy.abilityTimers.dash <= 0 && dist > 60 && dist < (dash.distance || 140) * 1.2) {
     enemy.effects.dashBoost = 2.6;
     enemy.abilityTimers.dash = dash.cooldown || 4000;
@@ -234,7 +236,8 @@ function handleDash(enemy, dt, dist) {
 function handleBlink(enemy, dt, dist, player) {
   const blink = enemy.abilities?.blink;
   if (!blink) return;
-  enemy.abilityTimers.blink = (enemy.abilityTimers.blink ?? blink.cooldown || 6000) - dt;
+  const blinkCooldown = blink.cooldown ?? 6000;
+  enemy.abilityTimers.blink = (enemy.abilityTimers.blink ?? blinkCooldown) - dt;
   if (enemy.abilityTimers.blink <= 0 && dist > (blink.distance || 140)) {
     const angle = Math.random() * Math.PI * 2;
     const radius = (blink.distance || 140) * 0.6;
@@ -246,7 +249,8 @@ function handleBlink(enemy, dt, dist, player) {
 }
 
 function handleSlam(enemy, config, dt, player) {
-  enemy.abilityTimers.slam = (enemy.abilityTimers.slam ?? config.cooldown || 4800) - dt;
+  const slamCooldown = config.cooldown ?? 4800;
+  enemy.abilityTimers.slam = (enemy.abilityTimers.slam ?? slamCooldown) - dt;
   if (enemy.abilityTimers.slam > 0) return;
   const radius = config.radius || 120;
   const distance = Math.hypot(player.position.x - enemy.position.x, player.position.y - enemy.position.y);
@@ -280,7 +284,8 @@ function handleSlam(enemy, config, dt, player) {
 }
 
 function handleThrow(enemy, config, dt, callbacks, dirX, dirY) {
-  enemy.abilityTimers.throw = (enemy.abilityTimers.throw ?? config.cooldown || 4200) - dt;
+  const throwCooldown = config.cooldown ?? 4200;
+  enemy.abilityTimers.throw = (enemy.abilityTimers.throw ?? throwCooldown) - dt;
   if (enemy.abilityTimers.throw > 0) return;
   enemy.abilityTimers.throw = config.cooldown || 4200;
   callbacks?.onEnemyShoot?.(enemy, dirX, dirY, { projectile: enemy.projectile || 'enemy-bolt', speed: 260 });
@@ -303,21 +308,24 @@ function updateBoss(enemy, dt, callbacks) {
   if (!behavior) return;
 
   if (behavior.spawnMinions) {
-    behavior.timers.summon = (behavior.timers.summon ?? behavior.spawnMinions.cooldown || 9000) - dt;
+    const summonCooldown = behavior.spawnMinions.cooldown ?? 9000;
+    behavior.timers.summon = (behavior.timers.summon ?? summonCooldown) - dt;
     if (behavior.timers.summon <= 0) {
       spawnBossMinions(enemy, behavior.spawnMinions.count || 3);
       behavior.timers.summon = behavior.spawnMinions.cooldown || 9000;
     }
   }
   if (behavior.shockwave) {
-    behavior.timers.shockwave = (behavior.timers.shockwave ?? behavior.shockwave.charge || 900) - dt;
+    const shockwaveCharge = behavior.shockwave.charge ?? 900;
+    behavior.timers.shockwave = (behavior.timers.shockwave ?? shockwaveCharge) - dt;
     if (behavior.timers.shockwave <= 0) {
       triggerShockwave(enemy, behavior.shockwave);
       behavior.timers.shockwave = behavior.shockwave.cooldown || 7000;
     }
   }
   if (behavior.meteor) {
-    behavior.timers.meteor = (behavior.timers.meteor ?? behavior.meteor.delay || 700) - dt;
+    const meteorDelay = behavior.meteor.delay ?? 700;
+    behavior.timers.meteor = (behavior.timers.meteor ?? meteorDelay) - dt;
     if (behavior.timers.meteor <= 0) {
       triggerMeteor(enemy, behavior.meteor);
       behavior.timers.meteor = behavior.meteor.cooldown || 6500;
