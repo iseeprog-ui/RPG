@@ -1,228 +1,88 @@
 import { WORLD, PLAYER_CLASSES, LEVELING, CLASS_BRANCHES, UI_STRINGS } from './constants.js';
 import { gameState } from './state.js';
+import { createPlayerSpriteSet, createWeaponAnimationSet, createFxAnimator } from '../assets/sprites.js';
 
-const spriteAtlas = {};
-
-function createFrame(size) {
-  const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext('2d');
-  ctx.imageSmoothingEnabled = false;
-  return { canvas, ctx };
-}
-
-function addNoise(ctx, size, baseColor) {
-  const lighter = lighten(baseColor, 24);
-  const darker = lighten(baseColor, -28);
-  for (let i = 0; i < size * size * 0.08; i++) {
-    ctx.fillStyle = i % 2 === 0 ? lighter : darker;
-    const x = Math.floor(Math.random() * size);
-    const y = Math.floor(Math.random() * size);
-    ctx.fillRect(x, y, 1, 1);
-  }
-}
-
-function lighten(hex, amount) {
-  const c = parseInt(hex.replace('#', ''), 16);
-  const r = Math.min(255, Math.max(0, ((c >> 16) & 0xff) + amount));
-  const g = Math.min(255, Math.max(0, ((c >> 8) & 0xff) + amount));
-  const b = Math.min(255, Math.max(0, (c & 0xff) + amount));
-  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
-}
-
-const PALETTE = {
-  warrior: ['#f97316', '#fed7aa'],
-  berserker: ['#f43f5e', '#fecaca'],
-  ranger: ['#22c55e', '#bbf7d0'],
-  mage: ['#38bdf8', '#bae6fd'],
-  assassin: ['#a855f7', '#e9d5ff']
+const CLASS_WEAPONS = {
+  warrior: 'sword',
+  berserker: 'axe',
+  ranger: 'bow',
+  mage: 'staff',
+  assassin: 'dagger'
 };
 
-export function buildPlayerSprites() {
-  const size = 32;
-  Object.keys(PLAYER_CLASSES).forEach(cls => {
-    spriteAtlas[cls] = {
-      idle: buildAnimationFrames(cls, 'idle', size, 4),
-      walk: buildAnimationFrames(cls, 'walk', size, 6),
-      attack: buildAnimationFrames(cls, 'attack', size, 5),
-      death: buildAnimationFrames(cls, 'death', size, 5)
-    };
-  });
-}
+const CLASS_ATTACK_VARIANT = {
+  warrior: 'overhead_slash',
+  berserker: 'charged_slash',
+  ranger: 'bow_release',
+  mage: 'cast_release',
+  assassin: 'fast_combo'
+};
 
-function buildAnimationFrames(cls, animation, size, length) {
-  const frames = [];
-  for (let i = 0; i < length; i++) {
-    const { canvas, ctx } = createFrame(size);
-    drawPlayerFrame(ctx, cls, animation, i, size);
-    frames.push(canvas);
+function ensureAnimationState(player) {
+  if (!player.animations) {
+    player.animations = createPlayerSpriteSet(player.classId) || {};
   }
-  return frames;
-}
-
-function drawPlayerFrame(ctx, cls, animation, frame, size) {
-  const [body, accent] = PALETTE[cls];
-  ctx.clearRect(0, 0, size, size);
-  // Shadow
-  ctx.fillStyle = 'rgba(15,23,42,0.75)';
-  ctx.fillRect(6, 26, 20, 4);
-  const bob = animation === 'idle'
-    ? Math.sin((frame / 4) * Math.PI * 2) * 1.5
-    : animation === 'walk'
-      ? Math.sin((frame / 6) * Math.PI * 2) * 2
-      : animation === 'attack'
-        ? Math.sin((frame / 5) * Math.PI) * 1.8
-        : 0;
-
-  const sway = animation === 'walk' ? Math.cos((frame / 6) * Math.PI * 2) * 2 : 0;
-  drawTorso(ctx, body, accent, bob, sway);
-  drawLimbs(ctx, cls, body, accent, animation, frame, bob, sway);
-  drawEquipment(ctx, cls, animation, frame, accent, body, size);
-  if (animation === 'death') {
-    ctx.globalAlpha = Math.max(0, 1 - frame * 0.22);
-    ctx.fillStyle = 'rgba(255,255,255,0.08)';
-    ctx.fillRect(0, 0, size, size);
+  if (!player.animation) {
+    const idle = player.animations?.idle;
+    player.animation = { name: 'idle', animator: idle || null };
+    if (player.animation.animator) player.animation.animator.reset();
   }
-  addNoise(ctx, size, body);
+  if (!player.weaponAnimations) {
+    const weaponKey = CLASS_WEAPONS[player.classId];
+    player.weaponAnimations = createWeaponAnimationSet(weaponKey) || {};
+  }
+  if (!player.effects) {
+    player.effects = { aura: null, weapon: null };
+  } else if (!player.effects.weapon) {
+    player.effects.weapon = null;
+  }
 }
 
-function drawTorso(ctx, body, accent, bob, sway) {
-  ctx.save();
-  ctx.translate(sway * 0.2, bob * 0.2);
-  ctx.fillStyle = body;
-  ctx.fillRect(11, 10 + bob, 10, 12);
-  ctx.fillRect(10, 8 + bob, 12, 4);
-  ctx.fillRect(12, 6 + bob, 8, 4);
-  ctx.fillStyle = lighten(body, -40);
-  ctx.fillRect(12, 20 + bob, 4, 8);
-  ctx.fillRect(16, 20 + bob, 4, 8);
-  ctx.fillStyle = accent;
-  ctx.fillRect(13, 6 + bob, 6, 5);
-  ctx.fillRect(14, 4 + bob, 4, 3);
-  ctx.restore();
+function setPlayerAnimation(player, name, { force = false } = {}) {
+  ensureAnimationState(player);
+  if (!player.animations || !player.animations[name]) return;
+  if (!force && player.animation?.name === name) return;
+  const animator = player.animations[name];
+  animator.reset();
+  player.animation = { name, animator };
 }
 
-function drawLimbs(ctx, cls, body, accent, animation, frame, bob, sway) {
-  ctx.save();
-  const legSwing = animation === 'walk' ? Math.sin((frame / 6) * Math.PI * 2) * 3 : 0;
-  const armSwing = animation === 'walk' ? Math.cos((frame / 6) * Math.PI * 2) * 3 : 0;
-
-  // legs
-  ctx.fillStyle = lighten(body, -50);
-  ctx.fillRect(10 + legSwing * 0.2, 22 + bob, 4, 8);
-  ctx.fillRect(16 - legSwing * 0.2, 22 + bob, 4, 8);
-
-  ctx.fillStyle = lighten(body, -30);
-  ctx.fillRect(8 + armSwing * 0.2, 12 + bob, 4, 6);
-  ctx.fillRect(20 - armSwing * 0.2, 12 + bob, 4, 6);
-
-  if (animation === 'attack') {
-    ctx.fillStyle = accent;
-    if (cls === 'warrior' || cls === 'berserker') {
-      ctx.fillRect(6, 12 + bob, 6, 6);
-      ctx.fillRect(20, 12 + bob, 6, 6);
-    } else if (cls === 'ranger') {
-      ctx.fillRect(5, 10 + bob, 4, 10);
-      ctx.fillRect(22, 10 + bob, 4, 10);
-    } else if (cls === 'mage') {
-      ctx.fillRect(22, 8 + bob, 5, 12);
-      ctx.fillRect(6, 9 + bob, 5, 12);
-    } else if (cls === 'assassin') {
-      ctx.fillRect(5, 10 + bob, 4, 9);
-      ctx.fillRect(21, 9 + bob, 4, 10);
+function triggerWeaponFx(player, variant) {
+  if (!player.weaponAnimations) return;
+  const animatorFactory = player.weaponAnimations[variant];
+  if (!animatorFactory) return;
+  const animator = animatorFactory;
+  animator.reset();
+  player.effects.weapon = {
+    animator,
+    life: 0,
+    duration: 600
+  };
+  if (['warrior', 'berserker', 'assassin'].includes(player.classId)) {
+    const swing = createFxAnimator('swing');
+    if (swing) {
+      swing.reset();
+      gameState.particles.push({
+        type: 'sprite',
+        animator: swing,
+        position: { ...player.position },
+        rotation: player.facing,
+        layer: 'front',
+        life: 0,
+        ttl: 320
+      });
     }
   }
-  ctx.restore();
 }
 
-function drawEquipment(ctx, cls, animation, frame, accent, body, size) {
-  if (animation === 'attack') {
-    switch (cls) {
-      case 'warrior':
-        drawBladeSwing(ctx, frame, '#f1f5f9', accent, 18, 12);
-        break;
-      case 'berserker':
-        drawBladeSwing(ctx, frame, '#fee2e2', '#ef4444', 20, 14);
-        break;
-      case 'ranger':
-        drawBowAttack(ctx, frame, accent, body);
-        break;
-      case 'mage':
-        drawStaffCast(ctx, frame, accent, size);
-        break;
-      case 'assassin':
-        drawAssassinStrike(ctx, frame, accent);
-        break;
-    }
-  } else if (animation === 'death') {
-    ctx.fillStyle = 'rgba(148,163,184,0.4)';
-    ctx.fillRect(6 + frame, 18 + frame * 1.5, 20 - frame * 2, 6);
+function updateWeaponFx(player, dt) {
+  if (!player.effects?.weapon) return;
+  const fx = player.effects.weapon;
+  fx.animator.update(dt);
+  fx.life += dt;
+  if (fx.animator.finished || fx.life >= fx.duration) {
+    player.effects.weapon = null;
   }
-}
-
-function drawBladeSwing(ctx, frame, bladeColor, trailColor, radius, thickness) {
-  ctx.save();
-  ctx.translate(16, 16);
-  const progress = frame / 4;
-  ctx.rotate(-Math.PI / 2 + progress * Math.PI * 1.2);
-  ctx.strokeStyle = trailColor;
-  ctx.lineWidth = thickness;
-  ctx.globalAlpha = 0.35 + progress * 0.3;
-  ctx.beginPath();
-  ctx.arc(0, 0, radius, -Math.PI / 4, Math.PI / 4);
-  ctx.stroke();
-  ctx.strokeStyle = bladeColor;
-  ctx.lineWidth = thickness - 6;
-  ctx.globalAlpha = 0.9;
-  ctx.beginPath();
-  ctx.arc(0, 0, radius - 4, -Math.PI / 6, Math.PI / 3);
-  ctx.stroke();
-  ctx.restore();
-}
-
-function drawBowAttack(ctx, frame, accent, body) {
-  ctx.fillStyle = accent;
-  ctx.fillRect(8, 8, 3, 16);
-  ctx.fillRect(21, 8, 3, 16);
-  ctx.strokeStyle = 'rgba(255,255,255,0.6)';
-  ctx.beginPath();
-  ctx.moveTo(9, 8);
-  ctx.lineTo(9 + frame * 1.4, 16);
-  ctx.lineTo(9, 24);
-  ctx.stroke();
-  ctx.fillStyle = lighten(body, 40);
-  ctx.fillRect(8 + frame, 15, 10, 2);
-  ctx.fillStyle = '#facc15';
-  ctx.fillRect(16 + frame, 15, 6, 2);
-}
-
-function drawStaffCast(ctx, frame, accent, size) {
-  ctx.fillStyle = accent;
-  ctx.fillRect(22, 6, 3, 20);
-  ctx.fillRect(7, 8, 3, 12);
-  ctx.fillStyle = 'rgba(148,163,255,0.7)';
-  const radius = 5 + frame;
-  ctx.beginPath();
-  ctx.arc(size - 6 - frame, 8 + frame * 0.6, radius, 0, Math.PI * 2);
-  ctx.fill();
-}
-
-function drawAssassinStrike(ctx, frame, accent) {
-  ctx.save();
-  ctx.translate(16, 16);
-  ctx.rotate(-Math.PI / 3 + frame * 0.3);
-  ctx.fillStyle = accent;
-  ctx.fillRect(-16, -3, 14, 3);
-  ctx.rotate(Math.PI / 1.5);
-  ctx.fillRect(-16, -3, 14, 3);
-  ctx.restore();
-  ctx.strokeStyle = 'rgba(124,58,237,0.4)';
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.moveTo(6, 8 + frame);
-  ctx.lineTo(24, 12 + frame * 0.6);
-  ctx.stroke();
 }
 
 export function createPlayer(classId, race = 'human') {
@@ -266,13 +126,16 @@ export function createPlayer(classId, race = 'human') {
     talents: new Set(),
     branches: {},
     specialization: CLASS_BRANCHES[classId]?.[0]?.id || null,
-    sprites: spriteAtlas[classId],
-    effects: { aura: null },
+    animations: null,
+    weaponAnimations: null,
+    animation: null,
+    effects: { aura: null, weapon: null },
     cooldownMessage: 0
   };
   if (player.specialization) {
     player.branches[player.specialization] = [];
   }
+  ensureAnimationState(player);
   gameState.player = player;
   return player;
 }
@@ -280,6 +143,8 @@ export function createPlayer(classId, race = 'human') {
 export function updatePlayer(dt, callbacks) {
   const player = gameState.player;
   if (!player) return;
+  ensureAnimationState(player);
+  updateWeaponFx(player, dt);
   if (player.state === 'dead') {
     advanceAnimation(player, dt);
     return;
@@ -316,7 +181,9 @@ export function updatePlayer(dt, callbacks) {
     const attack = createAttackPayload(player);
     player.derived.cooldown = player.stats.attackSpeed * 1000;
     player.state = 'attack';
-    player.animation = { name: 'attack', frame: 0, timer: 0 };
+    setPlayerAnimation(player, 'attack', { force: true });
+    const variant = CLASS_ATTACK_VARIANT[player.classId] || 'swing_right';
+    triggerWeaponFx(player, variant);
     if (callbacks?.onAttack) callbacks.onAttack(attack);
   }
   if (gameState.input.mouse.right && player.derived.skillCooldown <= 0) {
@@ -336,28 +203,28 @@ export function updatePlayer(dt, callbacks) {
 }
 
 function advanceAnimation(player, dt) {
-  const sprites = player.sprites;
-  if (!sprites) return;
-  const previous = player.animation.name;
-  if (!['attack', 'death'].includes(player.animation.name)) {
-    player.animation.name = player.state;
+  ensureAnimationState(player);
+  if (!player.animation || !player.animation.animator) {
+    setPlayerAnimation(player, 'idle', { force: true });
   }
-  if (player.animation.name !== previous) {
-    player.animation.frame = 0;
-    player.animation.timer = 0;
+  const currentName = player.animation?.name || 'idle';
+  if (player.state === 'dead') {
+    setPlayerAnimation(player, 'death', { force: currentName !== 'death' });
+  } else if (currentName === 'attack' || currentName === 'hit') {
+    // keep playing until finished
+  } else {
+    setPlayerAnimation(player, player.state || 'idle');
   }
-  player.animation.timer += dt;
-  const sequence = sprites[player.animation.name] || sprites[player.state] || sprites.idle;
-  const frameDuration = player.animation.name === 'attack' ? 90 : player.animation.name === 'death' ? 160 : 120;
-  if (player.animation.timer >= frameDuration) {
-    player.animation.timer = 0;
-    player.animation.frame = (player.animation.frame + 1) % sequence.length;
-    if (player.animation.name === 'attack' && player.animation.frame === sequence.length - 1) {
-      player.animation.name = 'idle';
-      player.animation.frame = 0;
-    }
-    if (player.animation.name === 'death' && player.animation.frame === sequence.length - 1) {
-      player.animation.frame = sequence.length - 1;
+  const animator = player.animation?.animator;
+  if (!animator) return;
+  animator.update(dt);
+  player.animation.frame = animator.frame;
+  if (!animator.loop && animator.finished) {
+    if (player.animation.name === 'attack') {
+      player.state = player.state === 'dead' ? 'dead' : 'idle';
+      setPlayerAnimation(player, player.state === 'dead' ? 'death' : 'idle', { force: true });
+    } else if (player.animation.name === 'hit') {
+      setPlayerAnimation(player, player.state === 'dead' ? 'death' : player.state || 'idle', { force: true });
     }
   }
 }
@@ -473,7 +340,22 @@ export function applyDamage(amount, source) {
   if (player.stats.hp <= 0) {
     player.stats.hp = 0;
     player.state = 'dead';
-    player.animation = { name: 'death', frame: 0, timer: 0 };
+    setPlayerAnimation(player, 'death', { force: true });
+  }
+  if (player.stats.hp > 0) {
+    setPlayerAnimation(player, 'hit', { force: true });
+    const fx = createFxAnimator('flash');
+    if (fx) {
+      fx.reset();
+      gameState.particles.push({
+        type: 'sprite',
+        animator: fx,
+        position: { ...player.position },
+        layer: 'front',
+        life: 0,
+        ttl: 240
+      });
+    }
   }
 }
 
@@ -549,9 +431,8 @@ export function unlockBranchNode(branchId, nodeId) {
 
 export function getPlayerSprite() {
   const player = gameState.player;
-  if (!player || !player.sprites) return null;
-  const seq = player.sprites[player.animation.name] || player.sprites[player.state] || player.sprites.idle;
-  return seq[player.animation.frame % seq.length];
+  if (!player || !player.animation?.animator) return null;
+  return player.animation;
 }
 
 export function setAura(aura) {

@@ -1,11 +1,12 @@
 import { WORLD, PLAYER_CLASSES, RARITY_COLORS } from './constants.js';
 import { gameState, resetGameState } from './state.js';
-import { buildPlayerSprites, createPlayer, updatePlayer, applyDamage, unlockBranchNode } from './player.js';
-import { buildEnemySprites, spawnZoneEnemies, updateEnemies, damageEnemy, findEnemiesInRange } from './enemies.js';
+import { createPlayer, updatePlayer, applyDamage, unlockBranchNode } from './player.js';
+import { spawnZoneEnemies, updateEnemies, damageEnemy, findEnemiesInRange } from './enemies.js';
 import { buildWorld } from './world.js';
 import { initQuests, updateQuest, getQuestData } from './quests.js';
 import { pickupDrop, getInventoryData, equipItem, removeFromInventory, buildTooltip } from './items.js';
 import { initRenderer, renderFrame } from './render.js';
+import { buildSpriteAtlases, getProjectileAnimator, createFxAnimator } from '../assets/sprites.js';
 
 const canvas = document.getElementById('game-canvas');
 const ctx = canvas.getContext('2d');
@@ -67,8 +68,7 @@ function init() {
   canvas.height = 540;
   buildWorld();
   initQuests();
-  buildPlayerSprites();
-  buildEnemySprites();
+  buildSpriteAtlases();
   initRenderer(canvas, ctx, ui);
   bindUI();
   bindInput();
@@ -280,6 +280,9 @@ function updateProjectiles(dt) {
     projectile.life = (projectile.life || 0) + dt;
     projectile.rotation = Math.atan2(projectile.velocity?.y || 0, projectile.velocity?.x || 1);
     projectile.scale = 1 + Math.sin((projectile.life || 0) / 160) * 0.08;
+    if (projectile.animator) {
+      projectile.animator.update(dt);
+    }
     if (projectile.trailColor) {
       projectile.trailTimer = (projectile.trailTimer || 0) - dt;
       if (projectile.trailTimer <= 0) {
@@ -340,19 +343,31 @@ function spawnProjectile(data) {
     projectile.trailColor = 'rgba(248,113,113,0.28)';
     projectile.trailInterval = 80;
   }
+  projectile.animator = getProjectileAnimator(projectile.type);
+  if (projectile.animator) projectile.animator.reset();
   gameState.projectiles.push(projectile);
 }
 
-function spawnEnemyProjectile(enemy, dirX, dirY) {
-  spawnProjectile({
-    type: 'enemy-bolt',
-    position: { ...enemy.position },
-    velocity: { x: dirX * 280, y: dirY * 280 },
-    damage: enemy.stats.damage,
-    owner: 'enemy',
-    radius: 8,
-    source: enemy
-  });
+function spawnEnemyProjectile(enemy, dirX, dirY, options = {}) {
+  const baseType = options.projectile || enemy.projectile || 'enemy-bolt';
+  const baseSpeed = options.speed || 280;
+  const pattern = options.pattern || 'single';
+  const baseAngle = Math.atan2(dirY, dirX);
+  const count = pattern === 'volley' ? (options.count || 3) : 1;
+  const spread = ((options.spread || 12) * Math.PI) / 180;
+  for (let i = 0; i < count; i++) {
+    const offset = count === 1 ? 0 : (i - (count - 1) / 2) * spread;
+    const angle = baseAngle + offset;
+    spawnProjectile({
+      type: baseType,
+      position: { ...enemy.position },
+      velocity: { x: Math.cos(angle) * baseSpeed, y: Math.sin(angle) * baseSpeed },
+      damage: enemy.stats.damage,
+      owner: 'enemy',
+      radius: baseType === 'boulder' ? 14 : 8,
+      source: enemy
+    });
+  }
 }
 
 function enemyStrike(enemy, player, distance) {
@@ -657,31 +672,22 @@ function hideTooltip() {
   ui.tooltip.style.display = 'none';
 }
 
-const SWING_COLORS = {
-  warrior: 'rgba(191,219,254,0.75)',
-  berserker: 'rgba(248,113,113,0.8)',
-  ranger: 'rgba(96,165,250,0.75)',
-  mage: 'rgba(129,140,248,0.75)',
-  assassin: 'rgba(196,181,253,0.8)'
-};
-
 function spawnSwingEffect(origin, angle, radius = 80, arc = Math.PI / 1.4) {
   if (!origin) return;
-  const cls = gameState.player?.classId;
-  const color = SWING_COLORS[cls] || 'rgba(255,255,255,0.7)';
-  const thickness = cls === 'berserker' ? 14 : cls === 'warrior' ? 10 : cls === 'assassin' ? 7 : 9;
-  gameState.particles.push({
-    type: 'swing',
-    origin: { x: origin.x, y: origin.y },
-    angle,
-    radius,
-    arc,
-    color,
-    thickness,
-    life: 0,
-    ttl: WORLD.meleeSwingDuration,
-    layer: 'front'
-  });
+  const animator = createFxAnimator('swing');
+  if (animator) {
+    animator.reset();
+    gameState.particles.push({
+      type: 'sprite',
+      animator,
+      position: { ...origin },
+      rotation: angle,
+      scale: radius / 80,
+      layer: 'front',
+      life: 0,
+      ttl: WORLD.meleeSwingDuration
+    });
+  }
 }
 
 function spawnImpactEffect(position, color, radius = 24) {
@@ -713,6 +719,9 @@ function updateParticles(dt) {
   const player = gameState.player;
   gameState.particles.forEach(effect => {
     effect.life = (effect.life || 0) + dt;
+    if (effect.animator) {
+      effect.animator.update(dt);
+    }
     if (!effect.triggered && effect.delay != null && effect.life >= effect.delay) {
       effect.triggered = true;
       if ((effect.type === 'aoe' || effect.type === 'meteor') && player) {
@@ -725,7 +734,10 @@ function updateParticles(dt) {
       }
     }
   });
-  gameState.particles = gameState.particles.filter(effect => effect.life < (effect.ttl || 0));
+  gameState.particles = gameState.particles.filter(effect => {
+    if (effect.animator && effect.animator.finished) return false;
+    return effect.life < (effect.ttl || 0);
+  });
 }
 
 window.addEventListener('load', init);

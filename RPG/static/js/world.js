@@ -38,6 +38,10 @@ export function buildWorld() {
 function paintForest(tiles, rect, decor) {
   fillRect(tiles, rect, 'grass', 'forest');
   scatterDecor(decor, rect, 'tree', 120, { color: '#14532d' });
+  scatterDecor(decor, rect, 'bush', 70, { color: '#166534' });
+  scatterDecor(decor, rect, 'mushroom', 45, { color: '#f97316' });
+  scatterDecor(decor, rect, 'chest', 4, { color: '#facc15' });
+  scatterDecor(decor, rect, 'log', 18, { color: '#78350f' });
   carveClearing(tiles, rect, { x: rect.x + Math.floor(rect.w / 3), y: rect.y + Math.floor(rect.h / 2) }, 5, 'road');
   carveClearing(tiles, rect, { x: rect.x + Math.floor(rect.w * 0.75), y: rect.y + Math.floor(rect.h * 0.6) }, 4, 'grass');
 }
@@ -50,6 +54,8 @@ function paintLake(tiles, rect, decor) {
   }
   addBridge(tiles, center, rect);
   scatterDecor(decor, rect, 'lily', 30, { color: '#22d3ee' });
+  scatterDecor(decor, rect, 'reed', 50, { color: '#38bdf8' });
+  scatterDecor(decor, rect, 'stone', 28, { color: '#94a3b8' });
 }
 
 function paintRuins(tiles, rect, decor) {
@@ -57,6 +63,9 @@ function paintRuins(tiles, rect, decor) {
   carveEllipse(tiles, { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 }, rect.w / 2 - 2, rect.h / 3, 'lava', 'ruins');
   outlineRect(tiles, rect, 'wall');
   scatterDecor(decor, rect, 'column', 40, { color: '#e5e7eb' });
+  scatterDecor(decor, rect, 'statue', 12, { color: '#cbd5f5' });
+  scatterDecor(decor, rect, 'brazier', 18, { color: '#f97316' });
+  scatterDecor(decor, rect, 'crate', 20, { color: '#a16207' });
   carveChambers(tiles, rect);
 }
 

@@ -39,8 +39,7 @@ export function renderFrame() {
   drawEffects('back');
   drawDrops();
   drawProjectiles();
-  drawPlayer();
-  drawEnemies();
+  drawActors();
   drawEffects('front');
   ctx.restore();
   if (camera.flash > 0) {
@@ -152,8 +151,52 @@ function drawDecor() {
       ctx.fill();
     } else if (item.type === 'lily') {
       ctx.fillRect(px - 4, py - 4, 8, 8);
+    } else if (item.type === 'bush') {
+      ctx.beginPath();
+      ctx.arc(px, py, size * 0.25, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (item.type === 'mushroom') {
+      ctx.fillStyle = item.props?.color || '#f97316';
+      ctx.beginPath();
+      ctx.arc(px, py - 6, size * 0.18, Math.PI, 0);
+      ctx.fill();
+      ctx.fillStyle = '#fde68a';
+      ctx.fillRect(px - 3, py - 6, 6, 8);
+    } else if (item.type === 'log') {
+      ctx.fillStyle = item.props?.color || '#78350f';
+      ctx.fillRect(px - 10, py - 4, 20, 8);
+    } else if (item.type === 'chest' || item.type === 'crate') {
+      ctx.fillStyle = item.props?.color || '#a16207';
+      ctx.fillRect(px - 8, py - 8, 16, 16);
+      ctx.strokeStyle = 'rgba(250,204,21,0.8)';
+      ctx.strokeRect(px - 8, py - 8, 16, 16);
+    } else if (item.type === 'reed') {
+      ctx.strokeStyle = item.props?.color || '#38bdf8';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(px - 4, py + 10);
+      ctx.lineTo(px - 6, py - 6);
+      ctx.moveTo(px + 4, py + 10);
+      ctx.lineTo(px + 6, py - 4);
+      ctx.stroke();
+    } else if (item.type === 'stone') {
+      ctx.fillStyle = item.props?.color || '#94a3b8';
+      ctx.beginPath();
+      ctx.ellipse(px, py, size * 0.2, size * 0.14, 0, 0, Math.PI * 2);
+      ctx.fill();
     } else if (item.type === 'column') {
       ctx.fillRect(px - 6, py - 8, 12, 16);
+    } else if (item.type === 'statue') {
+      ctx.fillStyle = item.props?.color || '#cbd5f5';
+      ctx.fillRect(px - 6, py - 16, 12, 20);
+      ctx.fillRect(px - 4, py - 24, 8, 8);
+    } else if (item.type === 'brazier') {
+      ctx.fillStyle = '#312e81';
+      ctx.fillRect(px - 4, py - 4, 8, 8);
+      ctx.fillStyle = item.props?.color || '#f97316';
+      ctx.beginPath();
+      ctx.arc(px, py - 6, 6, 0, Math.PI * 2);
+      ctx.fill();
     }
   });
 }
@@ -197,84 +240,82 @@ function drawDrops() {
   });
 }
 
-function drawPlayer() {
+function drawActors() {
+  const actors = [];
   const player = gameState.player;
-  if (!player) return;
-  const sprite = getPlayerSprite();
-  if (!sprite) return;
-  const size = sprite.width;
-  const px = player.position.x - size / 2;
-  const py = player.position.y - size / 2;
+  if (player) actors.push({ kind: 'player', entity: player });
+  gameState.enemies.forEach(enemy => {
+    if (enemy.remove) return;
+    actors.push({ kind: 'enemy', entity: enemy });
+  });
+  actors.sort((a, b) => (a.entity.position?.y || 0) - (b.entity.position?.y || 0));
+  actors.forEach(actor => {
+    if (actor.kind === 'player') drawPlayerSprite(actor.entity);
+    else drawEnemySprite(actor.entity);
+  });
+}
+
+function drawPlayerSprite(player) {
+  const sprite = player.animation || getPlayerSprite();
+  if (!sprite?.animator) return;
   if (player.effects.aura) {
     ctx.fillStyle = player.effects.aura.outer;
     ctx.beginPath();
-    ctx.arc(player.position.x, player.position.y, 28, 0, Math.PI * 2);
+    ctx.arc(player.position.x, player.position.y + 6, 28, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = player.effects.aura.inner;
     ctx.beginPath();
-    ctx.arc(player.position.x, player.position.y, 18, 0, Math.PI * 2);
+    ctx.arc(player.position.x, player.position.y, 20, 0, Math.PI * 2);
     ctx.fill();
   }
-  ctx.drawImage(sprite, px, py, size, size);
+  ctx.save();
+  ctx.shadowColor = 'rgba(59,130,246,0.4)';
+  ctx.shadowBlur = 12;
+  const flip = Math.cos(player.facing || 0) < 0;
+  sprite.animator.draw(ctx, player.position.x, player.position.y, { flip });
+  ctx.restore();
+  if (player.effects.weapon?.animator) {
+    player.effects.weapon.animator.draw(ctx, player.position.x, player.position.y, {
+      rotation: player.facing,
+      alpha: 0.9
+    });
+  }
 }
 
-function drawEnemies() {
-  gameState.enemies.forEach(enemy => {
-    const sprite = getEnemySprite(enemy);
-    if (!sprite) return;
-    const size = sprite.width;
-    const px = enemy.position.x - size / 2;
-    const py = enemy.position.y - size / 2;
-    ctx.drawImage(sprite, px, py, size, size);
-    ctx.fillStyle = 'rgba(239,68,68,0.8)';
-    ctx.fillRect(px, py - 8, size, 4);
-    ctx.fillStyle = '#22c55e';
-    const ratio = enemy.stats.hp / enemy.stats.maxHp;
-    ctx.fillRect(px, py - 8, size * ratio, 4);
-  });
+function drawEnemySprite(enemy) {
+  const sprite = getEnemySprite(enemy) || enemy.animation;
+  if (!sprite?.animator) return;
+  const flip = enemy.velocity?.x < 0;
+  sprite.animator.draw(ctx, enemy.position.x, enemy.position.y, { flip });
+  ctx.fillStyle = 'rgba(15,23,42,0.8)';
+  const barWidth = 40;
+  const px = enemy.position.x - barWidth / 2;
+  const py = enemy.position.y - 32;
+  ctx.fillRect(px, py, barWidth, 5);
+  ctx.fillStyle = '#22c55e';
+  const ratio = enemy.stats.hp / enemy.stats.maxHp;
+  ctx.fillRect(px, py, barWidth * Math.max(0, ratio), 5);
 }
 
 function drawProjectiles() {
   gameState.projectiles.forEach(projectile => {
     const { position, type } = projectile;
-    ctx.save();
-    ctx.translate(position.x, position.y);
     const rotation = projectile.rotation ?? Math.atan2(projectile.velocity?.y || 0, projectile.velocity?.x || 1);
-    const scale = projectile.scale || 1;
-    if (type === 'arrow') {
-      ctx.rotate(rotation);
-      ctx.fillStyle = 'rgba(250,204,21,0.9)';
-      ctx.fillRect(-12 * scale, -2 * scale, 16 * scale, 4 * scale);
-      ctx.fillStyle = 'rgba(249,115,22,0.9)';
-      ctx.fillRect(-14 * scale, -1.5 * scale, 4 * scale, 3 * scale);
-    } else if (type === 'orb') {
-      ctx.fillStyle = 'rgba(129,140,248,0.8)';
-      const radius = 6 * scale;
-      ctx.beginPath();
-      ctx.arc(0, 0, radius, 0, Math.PI * 2);
-      ctx.fill();
-    } else if (type === 'fireball') {
-      const pulse = 1 + Math.sin(projectile.life / 90) * 0.2;
-      ctx.fillStyle = 'rgba(248,113,113,0.65)';
-      ctx.beginPath();
-      ctx.arc(0, 0, (projectile.radius || 16) * 0.5 * scale * pulse, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,0.4)';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(0, 0, (projectile.radius || 16) * 0.4 * scale, 0, Math.PI * 2);
-      ctx.stroke();
-    } else if (type === 'enemy-bolt') {
-      ctx.rotate(rotation);
-      ctx.fillStyle = 'rgba(239,68,68,0.85)';
-      ctx.fillRect(-10 * scale, -2 * scale, 20 * scale, 4 * scale);
+    if (projectile.animator) {
+      projectile.animator.draw(ctx, position.x, position.y, {
+        rotation,
+        scale: projectile.scale || 1
+      });
     } else {
-      ctx.fillStyle = 'rgba(148,163,184,0.6)';
-      ctx.beginPath();
-      ctx.arc(0, 0, 4 * scale, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.save();
+      ctx.translate(position.x, position.y);
+      ctx.rotate(rotation);
+      const scale = projectile.scale || 1;
+      ctx.fillStyle = type === 'enemy-bolt' ? 'rgba(239,68,68,0.85)' : 'rgba(148,163,184,0.6)';
+      const length = type === 'enemy-bolt' ? 20 : 12;
+      ctx.fillRect(-length / 2 * scale, -2 * scale, length * scale, 4 * scale);
+      ctx.restore();
     }
-    ctx.restore();
   });
 }
 
@@ -286,6 +327,9 @@ function drawEffects(layer) {
       switch (effect.type) {
         case 'swing':
           drawSwingEffect(effect, progress);
+          break;
+        case 'sprite':
+          drawSpriteEffect(effect);
           break;
         case 'impact':
           drawImpactEffect(effect, progress);
@@ -377,5 +421,14 @@ function drawMeteorEffect(effect, progress) {
   ctx.lineTo(effect.position.x, effect.position.y + effect.radius);
   ctx.stroke();
   ctx.restore();
+}
+
+function drawSpriteEffect(effect) {
+  if (!effect.animator) return;
+  effect.animator.draw(ctx, effect.position.x, effect.position.y, {
+    rotation: effect.rotation || 0,
+    scale: effect.scale || 1,
+    alpha: effect.alpha || 1
+  });
 }
 

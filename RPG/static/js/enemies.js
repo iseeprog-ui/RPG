@@ -3,111 +3,29 @@ import { gameState } from './state.js';
 import { gainExperience, setAura } from './player.js';
 import { dropLoot } from './items.js';
 import { updateQuest } from './quests.js';
+import { createEnemySpriteSet, createFxAnimator } from '../assets/sprites.js';
 
-const enemySprites = {};
-
-const ENEMY_COLORS = {
-  brute: { body: '#16a34a', accent: '#052e16' },
-  shaman: { body: '#a855f7', accent: '#312e81' },
-  archer: { body: '#9ca3af', accent: '#1f2937' },
-  boss: { body: '#f97316', accent: '#7c2d12' }
-};
-
-export function buildEnemySprites() {
-  const size = 30;
-  Object.keys(ENEMIES).forEach(type => {
-    enemySprites[type] = {
-      idle: buildEnemyAnimation(type, 'idle', size, type === 'boss' ? 6 : 4),
-      move: buildEnemyAnimation(type, 'move', size, type === 'boss' ? 8 : 6),
-      attack: buildEnemyAnimation(type, 'attack', size, type === 'boss' ? 6 : 4),
-      death: buildEnemyAnimation(type, 'death', size, 6),
-      spawn: type === 'boss' ? buildEnemyAnimation(type, 'spawn', size, 6) : null
-    };
-  });
-}
-
-function buildEnemyAnimation(type, animation, size, length) {
-  const frames = [];
-  for (let i = 0; i < length; i++) {
-    const canvas = document.createElement('canvas');
-    canvas.width = size;
-    canvas.height = size;
-    const ctx = canvas.getContext('2d');
-    ctx.imageSmoothingEnabled = false;
-    drawEnemyFrame(ctx, type, animation, i, size, length);
-    frames.push(canvas);
+function ensureEnemySprites(enemy) {
+  if (!enemy.animations) {
+    enemy.animations = createEnemySpriteSet(enemy.type) || {};
   }
-  return frames;
-}
-
-function drawEnemyFrame(ctx, type, animation, frame, size, length) {
-  const colors = ENEMY_COLORS[type];
-  ctx.clearRect(0, 0, size, size);
-  ctx.fillStyle = 'rgba(15,23,42,0.65)';
-  ctx.fillRect(6, 26, 18, 4);
-  const wobble = animation === 'idle'
-    ? Math.sin((frame / Math.max(1, length - 1)) * Math.PI * 2) * 1.5
-    : animation === 'move'
-      ? Math.cos((frame / Math.max(1, length)) * Math.PI * 2) * 2
-      : 0;
-  ctx.fillStyle = colors.body;
-  if (type === 'boss') {
-    drawBossFrame(ctx, animation, frame, length, colors);
-    return;
+  if (!enemy.animation || !enemy.animation.animator) {
+    const idle = enemy.animations?.idle;
+    enemy.animation = { name: 'idle', animator: idle || null };
+    if (enemy.animation.animator) enemy.animation.animator.reset();
   }
-  ctx.fillRect(10, 6 + wobble, 12, 12);
-  ctx.fillRect(12, 4 + wobble, 8, 6);
-  ctx.fillStyle = colors.accent;
-  ctx.fillRect(8, 18 + wobble, 6, 8);
-  ctx.fillRect(16, 18 + wobble, 6, 8);
-  if (animation === 'attack') {
-    ctx.fillStyle = '#f8fafc';
-    const swing = frame / Math.max(1, length - 1);
-    ctx.fillRect(4 + swing * 10, 10, 8 + swing * 4, 4);
-  }
-  if (type === 'shaman') {
-    ctx.fillStyle = 'rgba(192,132,252,0.6)';
-    ctx.beginPath();
-    ctx.arc(16, 6 + wobble, 4 + frame % 2, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  if (animation === 'death') {
-    ctx.globalAlpha = Math.max(0, 1 - frame * 0.18);
-    ctx.fillStyle = 'rgba(148,163,184,0.4)';
-    ctx.fillRect(8, 16 + frame, 14, 6);
+  if (!enemy.abilityTimers) {
+    enemy.abilityTimers = {};
   }
 }
 
-function drawBossFrame(ctx, animation, frame, length, colors) {
-  const wobble = Math.sin(frame / Math.max(1, length) * Math.PI * 2) * 1.8;
-  ctx.fillStyle = colors.body;
-  const scale = animation === 'spawn' ? (frame + 1) / length : 1;
-  const height = 16 * scale;
-  const width = 16 * scale;
-  ctx.fillRect(8 + (1 - scale) * 8, 6 + wobble + (1 - scale) * 6, width, height);
-  ctx.fillStyle = colors.accent;
-  ctx.fillRect(6 + (1 - scale) * 10, 18 + wobble, 6, 9);
-  ctx.fillRect(18 - (1 - scale) * 6, 18 + wobble, 6, 9);
-  ctx.fillStyle = '#fee2e2';
-  ctx.fillRect(12, 4 + wobble, 12, 6);
-  ctx.fillStyle = '#1f2937';
-  ctx.fillRect(12, 2 + wobble, 8, 3);
-  ctx.fillStyle = 'rgba(248,113,113,0.6)';
-  ctx.beginPath();
-  ctx.arc(16, 10 + wobble, 6 + Math.sin(frame) * 0.8, 0, Math.PI * 2);
-  ctx.fill();
-  if (animation === 'attack') {
-    ctx.strokeStyle = 'rgba(251,113,133,0.9)';
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.arc(16, 14 + wobble, 10, frame * 0.4, frame * 0.4 + Math.PI / 1.2);
-    ctx.stroke();
-  }
-  if (animation === 'death') {
-    ctx.globalAlpha = Math.max(0, 1 - frame * 0.18);
-    ctx.fillStyle = 'rgba(248,250,252,0.2)';
-    ctx.fillRect(6, 14 + frame * 1.5, 20, 6);
-  }
+function setEnemyAnimation(enemy, name, { force = false } = {}) {
+  ensureEnemySprites(enemy);
+  if (!enemy.animations || !enemy.animations[name]) return;
+  if (!force && enemy.animation?.name === name) return;
+  const animator = enemy.animations[name];
+  animator.reset();
+  enemy.animation = { name, animator };
 }
 
 export function spawnZoneEnemies(zoneId, count = 6) {
@@ -128,7 +46,8 @@ export function spawnZoneEnemies(zoneId, count = 6) {
       y: (bossRect.y + bossRect.h / 2) * WORLD.tileSize
     };
     boss.state = 'spawn';
-    boss.animation = { name: 'spawn', frame: 0, timer: 0 };
+    ensureEnemySprites(boss);
+    setEnemyAnimation(boss, 'spawn', { force: true });
     boss.spawnTimer = 1400;
     boss.behavior = { timers: {}, phases: [] };
     gameState.enemies.push(boss);
@@ -159,14 +78,19 @@ function createEnemy(type, zone, rect) {
     position: randomWorldPoint(rect),
     velocity: { x: 0, y: 0 },
     state: 'idle',
-    animation: { name: 'idle', frame: 0, timer: 0 },
-    sprites: enemySprites[type],
+    animation: null,
+    animations: null,
+    abilityTimers: {},
     ranged: blueprint.ranged,
+    projectile: blueprint.projectile,
+    abilities: blueprint.abilities || {},
     xp: blueprint.xp * scale.xp,
     isBoss: false,
     phase: 0,
-    deathTimer: 0
+    deathTimer: 0,
+    effects: {}
   };
+  ensureEnemySprites(enemy);
   return enemy;
 }
 
@@ -180,72 +104,187 @@ export function updateEnemies(dt, callbacks) {
   const player = gameState.player;
   if (!player) return;
   gameState.enemies.forEach(enemy => {
+    ensureEnemySprites(enemy);
     if (enemy.state === 'death') {
-      updateEnemyAnimation(enemy, dt);
+      advanceEnemyAnimation(enemy, dt);
       enemy.deathTimer -= dt;
       if (enemy.deathTimer <= 0) enemy.remove = true;
       return;
     }
     if (enemy.state === 'spawn') {
-      updateEnemyAnimation(enemy, dt);
+      advanceEnemyAnimation(enemy, dt);
       enemy.spawnTimer -= dt;
       if (enemy.spawnTimer <= 0) {
         enemy.state = 'idle';
-        enemy.animation = { name: 'idle', frame: 0, timer: 0 };
+        setEnemyAnimation(enemy, 'idle', { force: true });
       }
       return;
     }
     if (enemy.stats.hp <= 0) return;
+
+    handleRegen(enemy, dt);
+
     const dx = player.position.x - enemy.position.x;
     const dy = player.position.y - enemy.position.y;
     const dist = Math.hypot(dx, dy);
     const dirX = dx / (dist || 1);
     const dirY = dy / (dist || 1);
-    if (enemy.ranged && dist < 260) {
-      enemy.velocity.x = -dirX * enemy.stats.speed * 0.4;
-      enemy.velocity.y = -dirY * enemy.stats.speed * 0.4;
-    } else {
-      enemy.velocity.x = dirX * enemy.stats.speed * 0.5;
-      enemy.velocity.y = dirY * enemy.stats.speed * 0.5;
-    }
+
+    const dashBoost = handleDash(enemy, dt, dist);
+    handleBlink(enemy, dt, dist, player);
+
+    let speedMultiplier = enemy.ranged && dist < 280 ? -0.35 : 0.55;
+    enemy.velocity.x = dirX * enemy.stats.speed * speedMultiplier * dashBoost;
+    enemy.velocity.y = dirY * enemy.stats.speed * speedMultiplier * dashBoost;
+
     enemy.position.x += enemy.velocity.x * dt / 1000;
     enemy.position.y += enemy.velocity.y * dt / 1000;
+
     enemy.stats.timer -= dt;
-    enemy.state = Math.hypot(enemy.velocity.x, enemy.velocity.y) > 5 ? 'move' : 'idle';
-    if (enemy.stats.timer <= 0 && dist < 220) {
+    enemy.state = Math.hypot(enemy.velocity.x, enemy.velocity.y) > 5 ? 'walk' : 'idle';
+
+    const abilities = enemy.abilities || {};
+    if (abilities.volley) {
+      const cooldown = abilities.volley.cooldown || 5200;
+      enemy.abilityTimers.volley = (enemy.abilityTimers.volley ?? cooldown) - dt;
+    }
+    if (enemy.stats.timer <= 0) {
       enemy.stats.timer = enemy.stats.attackDelay * 1000;
-      enemy.state = 'attack';
       if (enemy.ranged) {
-        callbacks?.onEnemyShoot?.(enemy, dirX, dirY);
+        if (abilities.volley && (enemy.abilityTimers.volley ?? 0) <= 0) {
+          enemy.abilityTimers.volley = abilities.volley.cooldown || 5200;
+          callbacks?.onEnemyShoot?.(enemy, dirX, dirY, {
+            pattern: 'volley',
+            count: abilities.volley.count || 3,
+            spread: abilities.volley.spread || 12
+          });
+        } else {
+          callbacks?.onEnemyShoot?.(enemy, dirX, dirY, { projectile: enemy.projectile });
+        }
       } else {
         callbacks?.onEnemyStrike?.(enemy, player, dist);
       }
+      setEnemyAnimation(enemy, 'attack', { force: true });
     }
-    updateEnemyAnimation(enemy, dt);
+
+    if (abilities.slam) handleSlam(enemy, abilities.slam, dt, player);
+    if (abilities.throw) handleThrow(enemy, abilities.throw, dt, callbacks, dirX, dirY);
+
+    advanceEnemyAnimation(enemy, dt);
     if (enemy.isBoss) updateBoss(enemy, dt, callbacks);
   });
   gameState.enemies = gameState.enemies.filter(e => !e.remove);
 }
 
-function updateEnemyAnimation(enemy, dt) {
-  const sprites = enemy.sprites;
-  if (!sprites) return;
-  const name = enemy.animation.name || (enemy.state === 'attack' ? 'attack' : enemy.state === 'move' ? 'move' : enemy.state);
-  const seq = sprites[name] && sprites[name].length ? sprites[name] : sprites[enemy.state] && sprites[enemy.state].length ? sprites[enemy.state] : sprites.idle;
-  if (!seq || !seq.length) return;
-  enemy.animation.timer += dt;
-  if (enemy.animation.timer > 140) {
-    enemy.animation.timer = 0;
-    enemy.animation.frame = (enemy.animation.frame + 1) % seq.length;
-    if (enemy.state === 'attack' && enemy.animation.frame === seq.length - 1) {
-      enemy.state = 'idle';
-    }
-    if (enemy.animation.name === 'spawn' && enemy.animation.frame === seq.length - 1) {
-      enemy.animation.name = 'idle';
-      enemy.state = 'idle';
+function advanceEnemyAnimation(enemy, dt) {
+  ensureEnemySprites(enemy);
+  if (!enemy.animation?.animator) {
+    setEnemyAnimation(enemy, 'idle', { force: true });
+  }
+  const currentName = enemy.animation?.name || 'idle';
+  if (enemy.state === 'death') {
+    setEnemyAnimation(enemy, 'death', { force: currentName !== 'death' });
+  } else if (enemy.state === 'spawn') {
+    setEnemyAnimation(enemy, 'spawn', { force: currentName !== 'spawn' });
+  } else if (currentName === 'attack' || currentName === 'hit') {
+    // play out animation
+  } else {
+    setEnemyAnimation(enemy, enemy.state || 'idle');
+  }
+  const animator = enemy.animation?.animator;
+  if (!animator) return;
+  animator.update(dt);
+  enemy.animation.frame = animator.frame;
+  if (!animator.loop && animator.finished) {
+    if (['attack', 'hit', 'spawn'].includes(enemy.animation.name)) {
+      setEnemyAnimation(enemy, enemy.state === 'death' ? 'death' : 'idle', { force: true });
     }
   }
-  enemy.animation.name = name;
+}
+
+function handleRegen(enemy, dt) {
+  const regen = enemy.abilities?.regen;
+  if (!regen) return;
+  enemy.abilityTimers.regenTick = (enemy.abilityTimers.regenTick ?? regen.interval || 1000) - dt;
+  if (enemy.abilityTimers.regenTick <= 0) {
+    enemy.stats.hp = Math.min(enemy.stats.maxHp, enemy.stats.hp + (regen.amount || 2));
+    enemy.abilityTimers.regenTick += regen.interval || 1000;
+  }
+}
+
+function handleDash(enemy, dt, dist) {
+  const dash = enemy.abilities?.dash;
+  if (!dash) return enemy.effects.dashBoost ? enemy.effects.dashBoost : 1;
+  enemy.abilityTimers.dash = (enemy.abilityTimers.dash ?? dash.cooldown || 4000) - dt;
+  if (enemy.abilityTimers.dash <= 0 && dist > 60 && dist < (dash.distance || 140) * 1.2) {
+    enemy.effects.dashBoost = 2.6;
+    enemy.abilityTimers.dash = dash.cooldown || 4000;
+  }
+  if (enemy.effects.dashBoost) {
+    enemy.effects.dashBoost = Math.max(1, enemy.effects.dashBoost - dt / 600);
+    if (enemy.effects.dashBoost <= 1.05) {
+      enemy.effects.dashBoost = null;
+      return 1;
+    }
+    return enemy.effects.dashBoost;
+  }
+  return 1;
+}
+
+function handleBlink(enemy, dt, dist, player) {
+  const blink = enemy.abilities?.blink;
+  if (!blink) return;
+  enemy.abilityTimers.blink = (enemy.abilityTimers.blink ?? blink.cooldown || 6000) - dt;
+  if (enemy.abilityTimers.blink <= 0 && dist > (blink.distance || 140)) {
+    const angle = Math.random() * Math.PI * 2;
+    const radius = (blink.distance || 140) * 0.6;
+    enemy.position.x = player.position.x + Math.cos(angle) * radius;
+    enemy.position.y = player.position.y + Math.sin(angle) * radius;
+    enemy.abilityTimers.blink = blink.cooldown || 6000;
+    setEnemyAnimation(enemy, 'attack', { force: true });
+  }
+}
+
+function handleSlam(enemy, config, dt, player) {
+  enemy.abilityTimers.slam = (enemy.abilityTimers.slam ?? config.cooldown || 4800) - dt;
+  if (enemy.abilityTimers.slam > 0) return;
+  const radius = config.radius || 120;
+  const distance = Math.hypot(player.position.x - enemy.position.x, player.position.y - enemy.position.y);
+  if (distance > radius + 40) return;
+  enemy.abilityTimers.slam = config.cooldown || 4800;
+  setEnemyAnimation(enemy, 'attack', { force: true });
+  const fx = createFxAnimator('impact');
+  if (fx) {
+    fx.reset();
+    gameState.particles.push({
+      type: 'sprite',
+      animator: fx,
+      position: { ...enemy.position },
+      layer: 'front',
+      life: 0,
+      ttl: 360
+    });
+  }
+  gameState.particles.push({
+    type: 'aoe',
+    position: { ...enemy.position },
+    radius: config.radius || 120,
+    outline: 'rgba(248,113,113,0.8)',
+    color: 'rgba(248,113,113,0.25)',
+    delay: 320,
+    ttl: 620,
+    damage: enemy.stats.damage * (config.damageMult || 1.2),
+    owner: enemy,
+    layer: 'front'
+  });
+}
+
+function handleThrow(enemy, config, dt, callbacks, dirX, dirY) {
+  enemy.abilityTimers.throw = (enemy.abilityTimers.throw ?? config.cooldown || 4200) - dt;
+  if (enemy.abilityTimers.throw > 0) return;
+  enemy.abilityTimers.throw = config.cooldown || 4200;
+  callbacks?.onEnemyShoot?.(enemy, dirX, dirY, { projectile: enemy.projectile || 'enemy-bolt', speed: 260 });
+  setEnemyAnimation(enemy, 'attack', { force: true });
 }
 
 function updateBoss(enemy, dt, callbacks) {
@@ -309,8 +348,8 @@ function applyBossPhase(enemy, phase, callbacks) {
       enemy.stats.timer = enemy.stats.attackDelay * 1000;
     }
   }
-  const animName = phase.animation && behavior && enemy.sprites?.[phase.animation]?.length ? phase.animation : 'attack';
-  enemy.animation = { name: animName, frame: 0, timer: 0 };
+  const animName = phase.animation || 'attack';
+  setEnemyAnimation(enemy, animName, { force: true });
   if (animName === 'attack') enemy.state = 'attack';
   callbacks?.onBossPhase?.(enemy, phase);
 }
@@ -374,11 +413,24 @@ export function damageEnemy(enemy, amount, source) {
   if (!enemy || enemy.stats.hp <= 0) return;
   enemy.stats.hp -= amount;
   gameState.camera.shake = Math.max(gameState.camera.shake, WORLD.hitShake * 0.6);
+  setEnemyAnimation(enemy, 'hit', { force: true });
+  const fx = createFxAnimator('impact');
+  if (fx) {
+    fx.reset();
+    gameState.particles.push({
+      type: 'sprite',
+      animator: fx,
+      position: { ...enemy.position },
+      layer: 'front',
+      life: 0,
+      ttl: 240
+    });
+  }
   if (enemy.stats.hp <= 0) {
     if (!enemy.dead) {
       enemy.dead = true;
       enemy.state = 'death';
-      enemy.animation = { name: 'death', frame: 0, timer: 0 };
+      setEnemyAnimation(enemy, 'death', { force: true });
       enemy.deathTimer = 520;
       gainExperience(enemy.xp || 40);
       dropLoot(enemy, source);
@@ -388,15 +440,16 @@ export function damageEnemy(enemy, amount, source) {
         updateQuest('boss', 'boss', 1);
       }
       updateQuest('kill', enemy.type, 1);
+      if (enemy.abilities?.split) {
+        spawnSlimeFragments(enemy, enemy.abilities.split);
+      }
     }
   }
 }
 
 export function getEnemySprite(enemy) {
-  const sprites = enemy.sprites;
-  if (!sprites) return null;
-  const seq = sprites[enemy.animation.name] || sprites[enemy.state] || sprites.idle;
-  return seq[enemy.animation.frame % seq.length];
+  if (!enemy || !enemy.animation?.animator) return null;
+  return enemy.animation;
 }
 
 export function findEnemiesInRange(x, y, radius) {
@@ -407,5 +460,26 @@ export function findEnemiesInRange(x, y, radius) {
     if (dist <= radius) result.push({ enemy, dist });
   });
   return result;
+}
+
+function spawnSlimeFragments(enemy, config) {
+  const pieces = config.pieces || 2;
+  for (let i = 0; i < pieces; i++) {
+    const zone = ZONES.find(z => z.id === enemy.zone) || ZONES[0];
+    const fragment = createEnemy('slime', zone, { x: 0, y: 0, w: 1, h: 1 });
+    fragment.abilities = { ...fragment.abilities };
+    delete fragment.abilities.split;
+    fragment.stats.hp = Math.max(20, enemy.stats.maxHp * (config.scale || 0.5));
+    fragment.stats.maxHp = fragment.stats.hp;
+    fragment.stats.damage = enemy.stats.damage * 0.6;
+    fragment.position = {
+      x: enemy.position.x + (Math.random() - 0.5) * 40,
+      y: enemy.position.y + (Math.random() - 0.5) * 40
+    };
+    ensureEnemySprites(fragment);
+    setEnemyAnimation(fragment, 'spawn', { force: true });
+    fragment.spawnTimer = 600;
+    gameState.enemies.push(fragment);
+  }
 }
 

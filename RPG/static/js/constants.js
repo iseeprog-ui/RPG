@@ -157,38 +157,69 @@ export const CLASS_BRANCHES = {
 };
 
 export const ENEMIES = {
-  brute: {
-    label: 'Орк-брют',
-    sprite: 'brute',
-    base: { hp: 120, damage: 16, speed: 170, attackDelay: 1.1 },
-    xp: 50
+  goblin: {
+    label: 'Гоблин-резак',
+    sprite: 'goblin',
+    base: { hp: 70, damage: 12, speed: 230, attackDelay: 0.9 },
+    xp: 45,
+    abilities: { dash: { distance: 120, cooldown: 3200 } }
   },
-  shaman: {
-    label: 'Шаман',
-    sprite: 'shaman',
-    base: { hp: 90, damage: 12, speed: 140, attackDelay: 1.4 },
-    ranged: true,
-    xp: 60
+  orc: {
+    label: 'Орк-громила',
+    sprite: 'orc',
+    base: { hp: 240, damage: 24, speed: 170, attackDelay: 1.35 },
+    xp: 85,
+    abilities: { slam: { radius: 90, damageMult: 1.4, cooldown: 4800 } }
   },
-  archer: {
-    label: 'Лучник',
-    sprite: 'archer',
-    base: { hp: 80, damage: 14, speed: 160, attackDelay: 1.0 },
+  demon: {
+    label: 'Демон-чернокнижник',
+    sprite: 'demon',
+    base: { hp: 180, damage: 22, speed: 185, attackDelay: 1.1 },
+    xp: 95,
     ranged: true,
-    xp: 55
+    projectile: 'fireball',
+    abilities: { blink: { distance: 140, cooldown: 6200 } }
+  },
+  troll: {
+    label: 'Тролль-каменщик',
+    sprite: 'troll',
+    base: { hp: 320, damage: 28, speed: 150, attackDelay: 1.6 },
+    xp: 120,
+    ranged: true,
+    projectile: 'boulder',
+    abilities: {
+      regen: { amount: 3, interval: 900 },
+      throw: { cooldown: 4200 }
+    }
+  },
+  skeletonArcher: {
+    label: 'Скелет-лучник',
+    sprite: 'skeletonArcher',
+    base: { hp: 110, damage: 18, speed: 190, attackDelay: 1.0 },
+    xp: 65,
+    ranged: true,
+    projectile: 'arrow',
+    abilities: { volley: { count: 3, spread: 16, cooldown: 5200 } }
+  },
+  slime: {
+    label: 'Слизень',
+    sprite: 'slime',
+    base: { hp: 90, damage: 12, speed: 150, attackDelay: 1.2 },
+    xp: 40,
+    abilities: { split: { pieces: 2, scale: 0.55 } }
   },
   boss: {
     label: 'Демон-лорд',
     sprite: 'boss',
-    base: { hp: 1200, damage: 38, speed: 130, attackDelay: 0.8 },
-    xp: 1200,
+    base: { hp: 1400, damage: 42, speed: 140, attackDelay: 0.85 },
+    xp: 1500,
     phases: [
       {
         threshold: 0.7,
         animation: 'ignite',
         modifiers: {
-          spawnMinions: { count: 3, cooldown: 9000 },
-          shockwave: { radius: 180, charge: 900 }
+          spawnMinions: { count: 3, cooldown: 8500, pool: ['goblin', 'demon'] },
+          shockwave: { radius: 200, charge: 900 }
         }
       },
       {
@@ -196,10 +227,10 @@ export const ENEMIES = {
         animation: 'rage',
         modifiers: {
           enraged: true,
-          damageMult: 1.45,
+          damageMult: 1.5,
           speedMult: 1.25,
           attackDelay: 0.6,
-          meteor: { radius: 140, delay: 700 }
+          meteor: { radius: 160, delay: 650 }
         }
       }
     ]
@@ -213,7 +244,7 @@ export const ZONES = [
     difficulty: 'easy',
     enemyScale: { hp: 0.85, damage: 0.8, xp: 0.8 },
     environment: 'forest',
-    enemyPool: ['brute', 'archer'],
+    enemyPool: ['goblin', 'skeletonArcher', 'slime'],
     boss: null
   },
   {
@@ -222,7 +253,7 @@ export const ZONES = [
     difficulty: 'medium',
     enemyScale: { hp: 1.0, damage: 0.95, xp: 1.0 },
     environment: 'lake',
-    enemyPool: ['brute', 'archer', 'shaman'],
+    enemyPool: ['goblin', 'demon', 'skeletonArcher', 'slime'],
     boss: null
   },
   {
@@ -231,7 +262,7 @@ export const ZONES = [
     difficulty: 'hard',
     enemyScale: { hp: 1.25, damage: 1.15, xp: 1.3 },
     environment: 'ruins',
-    enemyPool: ['brute', 'shaman'],
+    enemyPool: ['orc', 'demon', 'troll'],
     boss: 'boss'
   }
 ];
@@ -325,9 +356,9 @@ export const BASE_ITEMS = [
 ];
 
 export const QUEST_TEMPLATES = [
-  { id: 'forest-hunt', name: 'Тренировка охоты', zone: 'forest', type: 'kill', target: 'brute', count: 6, reward: { xp: 220, gold: 40, item: 'rare' } },
+  { id: 'forest-hunt', name: 'Тренировка охоты', zone: 'forest', type: 'kill', target: 'goblin', count: 6, reward: { xp: 220, gold: 40, item: 'rare' } },
   { id: 'forest-rescue', name: 'Сбор искр', zone: 'forest', type: 'collect', target: 'ancient_orb', count: 3, reward: { xp: 260, gold: 55, item: 'uncommon' } },
-  { id: 'lake-cleansing', name: 'Очистка берега', zone: 'lake', type: 'kill', target: 'shaman', count: 5, reward: { xp: 360, gold: 120, item: 'epic' } },
+  { id: 'lake-cleansing', name: 'Очистка берега', zone: 'lake', type: 'kill', target: 'demon', count: 5, reward: { xp: 360, gold: 120, item: 'epic' } },
   { id: 'ruins-boss', name: 'Покорение демона', zone: 'ruins', type: 'boss', target: 'boss', reward: { xp: 1200, gold: 300, legendary: true } },
   { id: 'portal-scout', name: 'Разведка портала', zone: 'lake', type: 'discover', target: 'portal-lake-ruins', reward: { xp: 180, gold: 50 } }
 ];
