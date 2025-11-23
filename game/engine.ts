@@ -40,6 +40,7 @@ export class GameEngine {
   shake: number = 0;
   fps: number = 60;
   gameTime: number = 0;
+  zoom: number = 0.7; // 30% Zoom out
   
   // World Config
   worldSize = 12000;
@@ -178,6 +179,31 @@ export class GameEngine {
       
       this.addFloatingText(this.player.x, this.player.y - 100, `ENTERED ${sys.name.toUpperCase()}`, '#ffffff', 40);
       this.spawnWave();
+
+      // Boss Logic for Gamma System
+      if (systemId === 'gamma') {
+          this.spawnBoss();
+      }
+  }
+
+  spawnBoss() {
+      const boss: Ship = {
+          id: 'Dreadnought_Omega',
+          x: 0, y: -4000,
+          vx: 0, vy: 0,
+          angle: 0, rotation: 0, radius: 120, turretAngle: 0,
+          hp: 8000, maxHp: 8000,
+          shield: 5000, maxShield: 5000,
+          fuel: 1000, maxFuel: 1000, credits: 10000,
+          faction: 'pirates', type: 'Dreadnought',
+          level: 50, xp: 0, maxXp: 0, inventory: [], skills: {}, activeQuests: [],
+          slots: { 
+              weapon: { id: 'boss_laser', name: 'Omega Beam', type: 'weapon', rarity: 'legendary', quantity: 1, value: 0, icon: '☠️', stats: { damage: 150, cooldown: 0.1 } },
+              shield: null, engine: null, scanner: null 
+          }
+      };
+      this.enemies.push(boss);
+      this.addFloatingText(0, -4200, "WARNING: DREADNOUGHT DETECTED", '#ff0000', 50);
   }
 
   warp(targetSystem: string) {
@@ -324,12 +350,23 @@ export class GameEngine {
       let radius = 20;
       let dmg = 5;
 
-      if (this.player.level > 2 && rand > 0.7) {
-          type = 'Cruiser';
-          hp = 150; radius = 35; dmg = 12;
-      } else if (this.player.level > 4 && rand > 0.9) {
+      const level = this.player.level;
+
+      if (level >= 15 && rand > 0.95) {
+          type = 'Battleship';
+          hp = 1500; radius = 90; dmg = 50;
+      } else if (level >= 10 && rand > 0.9) {
           type = 'Destroyer';
           hp = 400; radius = 50; dmg = 25;
+      } else if (level >= 6 && rand > 0.8) {
+          type = 'Bomber';
+          hp = 200; radius = 35; dmg = 35; // Glass cannon
+      } else if (level >= 4 && rand > 0.7) {
+          type = 'Cruiser';
+          hp = 150; radius = 35; dmg = 12;
+      } else if (level >= 2 && rand > 0.5) {
+           type = 'Scout';
+           hp = 40; radius = 15; dmg = 6; // Fast
       }
       
       const sysBuff = sys.difficulty; 
@@ -380,8 +417,9 @@ export class GameEngine {
   }
 
   update(dt: number) {
-    const screenX = this.player.x - this.camera.x + this.width / 2;
-    const screenY = this.player.y - this.camera.y + this.height / 2;
+    // Zoom compensated mouse coordinates
+    const screenX = (this.player.x - this.camera.x) * this.zoom + this.width / 2;
+    const screenY = (this.player.y - this.camera.y) * this.zoom + this.height / 2;
     const targetRotation = Math.atan2(this.mouse.y - screenY, this.mouse.x - screenX);
     
     let diff = targetRotation - this.player.rotation;
@@ -462,6 +500,7 @@ export class GameEngine {
       if(p.type === 'explosion') p.radius += dt * 50;
       if(p.type === 'warp') p.radius += dt * 1000; 
       if(p.type === 'shockwave') p.radius += dt * 300;
+      if(p.type === 'shield_hit') p.radius += dt * 100;
     });
     this.particles = this.particles.filter(p => p.life > 0);
 
@@ -515,14 +554,23 @@ export class GameEngine {
         this.worldObjects.filter(o => o.type === 'asteroid').forEach(a => {
            if (Math.hypot(b.x - a.x, b.y - a.y) < a.radius) {
               b.life = 0;
-              this.addParticle(b.x, b.y, 'smoke');
+              
               if (a.resources && a.resources > 0) {
+                 // Mining visual effect
+                 for(let i=0; i<4; i++) this.addParticle(b.x, b.y, 'mining');
+                 
                  a.resources -= b.damage;
-                 if (Math.random() > 0.8) this.spawnLoot(a.x, a.y, 'resource');
+                 if (Math.random() > 0.8) {
+                    this.spawnLoot(a.x, a.y, 'resource');
+                    this.addParticle(b.x, b.y, 'spark');
+                 }
+                 
                  if (a.resources <= 0) {
-                   this.spawnExplosion(a.x, a.y, 'smoke', 8);
+                   this.spawnExplosion(a.x, a.y, 'explosion', 8);
                    a.radius = 0; 
                  }
+              } else {
+                 this.addParticle(b.x, b.y, 'smoke');
               }
            }
         });
@@ -555,13 +603,29 @@ export class GameEngine {
         let range = 400;
 
         if (e.type === 'Interceptor') { speed = 350; range = 200; }
-        if (e.type === 'Destroyer') { speed = 120; range = 700; }
+        else if (e.type === 'Scout') { speed = 450; range = 150; }
+        else if (e.type === 'Bomber') { speed = 250; range = 300; }
+        else if (e.type === 'Cruiser') { speed = 200; range = 400; }
+        else if (e.type === 'Destroyer') { speed = 120; range = 700; }
+        else if (e.type === 'Battleship') { speed = 80; range = 900; }
+        else if (e.type === 'Dreadnought') { speed = 40; range = 800; }
 
         if (dist > range) { e.vx += forward.x * speed * dt; e.vy += forward.y * speed * dt; } 
         else if (dist < range - 50) { e.vx -= forward.x * speed * dt; e.vy -= forward.y * speed * dt; }
         
-        if (dist < range + 200 && Math.random() < 0.02) {
-           this.fireBullet(e, e.rotation + (Math.random()-0.5)*0.1);
+        // Shoot logic
+        let shootChance = 0.02;
+        if (e.type === 'Dreadnought') shootChance = 0.1;
+
+        if (dist < range + 200 && Math.random() < shootChance) {
+           if (e.type === 'Dreadnought') {
+               // Boss shoots multiple pellets
+               this.fireBullet(e, e.rotation);
+               this.fireBullet(e, e.rotation + 0.2);
+               this.fireBullet(e, e.rotation - 0.2);
+           } else {
+               this.fireBullet(e, e.rotation + (Math.random()-0.5)*0.1);
+           }
         }
       }
       
@@ -572,7 +636,8 @@ export class GameEngine {
     });
 
     this.enemies = this.enemies.filter(e => e.hp > 0);
-    if (this.enemies.length < 2) this.spawnWave();
+    // Only spawn standard waves if not in Boss mode (or maybe allow minions)
+    if (this.enemies.length < 2 && this.currentSystemId !== 'gamma') this.spawnWave();
   }
 
   updateLoot(dt: number) {
@@ -634,8 +699,12 @@ export class GameEngine {
         else { color = '#f97316'; radius = 4; } // Default Orange (LF-1)
     } else {
         baseDmg = shooter.slots?.weapon?.stats?.damage || 8;
-        color = shooter.type === 'Destroyer' ? '#a855f7' : '#ef4444';
-        radius = 6;
+        if (shooter.type === 'Destroyer') color = '#a855f7';
+        else if (shooter.type === 'Battleship') { color = '#ffffff'; speed = 2000; radius = 8; }
+        else if (shooter.type === 'Dreadnought') { color = '#facc15'; speed = 1500; radius = 12; baseDmg = 40; }
+        else if (shooter.type === 'Bomber') { color = '#be123c'; radius = 6; }
+        else if (shooter.type === 'Scout') { color = '#facc15'; speed = 1200; radius = 3; }
+        else color = '#ef4444';
     }
     
     this.addParticle(shooter.x + Math.cos(angle)*shooter.radius, shooter.y + Math.sin(angle)*shooter.radius, 'boost');
@@ -675,6 +744,7 @@ export class GameEngine {
     let hullDmg = amount;
     if (e.shield > 0) {
       e.shield -= amount;
+      this.addParticle(e.x, e.y, 'shield_hit');
       if (e.shield < 0) { hullDmg = -e.shield; e.shield = 0; } 
       else hullDmg = 0;
     }
@@ -684,8 +754,16 @@ export class GameEngine {
       this.spawnExplosion(e.x, e.y, 'explosion', 15);
       this.shake = 5;
       if (e.faction !== 'player') {
-        this.player.credits += e.type === 'Destroyer' ? 500 : 100;
-        this.player.xp += e.type === 'Destroyer' ? 250 : 50;
+        let credits = 100;
+        let xp = 50;
+        if (e.type === 'Destroyer') { credits = 500; xp = 250; }
+        else if (e.type === 'Battleship') { credits = 2000; xp = 1000; }
+        else if (e.type === 'Dreadnought') { credits = 10000; xp = 5000; this.spawnLoot(e.x, e.y, 'crate'); this.spawnLoot(e.x, e.y, 'crate'); }
+        else if (e.type === 'Bomber') { credits = 150; xp = 80; }
+        else if (e.type === 'Scout') { credits = 50; xp = 25; }
+
+        this.player.credits += credits;
+        this.player.xp += xp;
         this.spawnLoot(e.x, e.y, 'crate');
         this.updateQuestProgress('kill', 1);
       }
@@ -698,6 +776,7 @@ export class GameEngine {
           const absorb = amount * 0.8;
           this.player.shield -= absorb;
           hullDmg = amount - absorb;
+          this.addParticle(this.player.x, this.player.y, 'shield_hit');
       }
       this.player.hp -= hullDmg;
       this.shake = 2;
@@ -720,8 +799,20 @@ export class GameEngine {
 
   addParticle(x: number, y: number, type: Particle['type']) {
     const angle = Math.random() * Math.PI * 2;
-    const speed = type === 'shockwave' ? 0 : (type === 'warp' ? Math.random()*500 + 200 : Math.random() * 200);
-    const life = type === 'shockwave' ? 0.4 : (type === 'warp' ? 1.0 : Math.random() * 0.8);
+    const speed = type === 'shockwave' || type === 'shield_hit' ? 0 : (type === 'warp' ? Math.random()*500 + 200 : Math.random() * 200);
+    const life = type === 'shockwave' ? 0.4 : (type === 'shield_hit' ? 0.3 : (type === 'warp' ? 1.0 : Math.random() * 0.8));
+    
+    let color = '#94a3b8';
+    if (type === 'boost') color = '#f59e0b';
+    else if (type === 'thrust') color = '#60a5fa';
+    else if (type === 'explosion') color = '#f97316';
+    else if (type === 'warp') color = '#fff';
+    else if (type === 'mining') color = '#facc15'; // Gold/Yellow mining sparks
+    else if (type === 'spark') color = '#fef08a';
+    else if (type === 'smoke') color = '#94a3b8';
+    else if (type === 'shockwave') color = '#cbd5e1';
+    else if (type === 'shield_hit') color = '#3b82f6';
+
     this.particles.push({
       x, y,
       vx: Math.cos(angle) * speed + (type === 'thrust' || type === 'boost' ? this.player.vx * 0.2 : 0),
@@ -729,7 +820,7 @@ export class GameEngine {
       angle: Math.random() * 6,
       radius: 0, life, maxLife: life,
       size: type === 'shockwave' ? 10 : (type === 'warp' ? 4 : Math.random() * 4 + 2),
-      color: type === 'boost' ? '#f59e0b' : (type === 'thrust' ? '#60a5fa' : (type === 'explosion' ? '#f97316' : (type === 'warp' ? '#fff' : '#94a3b8'))),
+      color: color,
       type: type
     });
   }
@@ -750,7 +841,11 @@ export class GameEngine {
     if(this.shake > 0) this.shake *= 0.9;
     
     ctx.save();
-    ctx.translate(width / 2 - this.camera.x + shakeX, height / 2 - this.camera.y + shakeY);
+    
+    // Camera Transform with Zoom
+    ctx.translate(width / 2, height / 2);
+    ctx.scale(this.zoom, this.zoom);
+    ctx.translate(-this.camera.x + shakeX, -this.camera.y + shakeY);
 
     this.drawNebulae();
     this.drawStarfield(0.05, '#475569', 2);
@@ -1067,10 +1162,10 @@ export class GameEngine {
     const ctx = this.ctx;
     this.particles.forEach(p => {
       ctx.globalAlpha = p.life / p.maxLife;
-      if (p.type === 'shockwave' || p.type === 'warp') {
+      if (p.type === 'shockwave' || p.type === 'warp' || p.type === 'shield_hit') {
           ctx.beginPath();
           ctx.strokeStyle = p.color;
-          ctx.lineWidth = p.type === 'warp' ? 5 : 3;
+          ctx.lineWidth = p.type === 'warp' ? 5 : (p.type === 'shield_hit' ? 2 : 3);
           ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
           ctx.stroke();
       } else {
@@ -1084,7 +1179,16 @@ export class GameEngine {
   }
 
   drawShips() {
-    this.enemies.forEach(e => this.drawShip(e, e.type === 'Destroyer' ? '#a855f7' : (e.type === 'Cruiser' ? '#f97316' : '#ef4444')));
+    this.enemies.forEach(e => {
+        let color = '#ef4444'; // Default Red
+        if (e.type === 'Scout') color = '#facc15'; // Yellow
+        else if (e.type === 'Cruiser') color = '#f97316'; // Orange
+        else if (e.type === 'Bomber') color = '#be123c'; // Dark Red
+        else if (e.type === 'Destroyer') color = '#a855f7'; // Purple
+        else if (e.type === 'Battleship') color = '#ffffff'; // White/Black
+        else if (e.type === 'Dreadnought') color = '#000000'; // Boss
+        this.drawShip(e, color);
+    });
     if(!this.player.data?.docked) this.drawShip(this.player, '#06b6d4');
   }
 
@@ -1111,13 +1215,30 @@ export class GameEngine {
     ctx.strokeStyle = color;
     ctx.lineWidth = 2;
     ctx.beginPath();
+    
+    // SHIP SHAPES
     if (ship.type === 'Interceptor') {
         ctx.moveTo(20, 0); ctx.lineTo(-15, 15); ctx.lineTo(-5, 0); ctx.lineTo(-15, -15);
+    } else if (ship.type === 'Scout') {
+        ctx.moveTo(15, 0); ctx.lineTo(-10, 10); ctx.lineTo(-5, 0); ctx.lineTo(-10, -10);
+    } else if (ship.type === 'Bomber') {
+        ctx.moveTo(25, 0); ctx.lineTo(-15, 20); ctx.lineTo(-15, 10); ctx.lineTo(-25, 10); ctx.lineTo(-25, -10); ctx.lineTo(-15, -10); ctx.lineTo(-15, -20);
     } else if (ship.type === 'Destroyer') {
         ctx.moveTo(40, 0); ctx.lineTo(-25, 30); ctx.lineTo(-15, 0); ctx.lineTo(-25, -30);
+    } else if (ship.type === 'Battleship') {
+        ctx.moveTo(60, 0); ctx.lineTo(-40, 40); ctx.lineTo(-30, 0); ctx.lineTo(-40, -40);
+        ctx.moveTo(-20, 20); ctx.lineTo(-20, -20); // Wings
+    } else if (ship.type === 'Dreadnought') {
+        ctx.fillStyle = '#333';
+        ctx.strokeStyle = '#facc15';
+        ctx.moveTo(80, 0); ctx.lineTo(-50, 60); ctx.lineTo(-40, 0); ctx.lineTo(-50, -60);
+        ctx.moveTo(0, 40); ctx.lineTo(-60, 40);
+        ctx.moveTo(0, -40); ctx.lineTo(-60, -40);
     } else {
+        // Player / Cruiser
         ctx.moveTo(30, 0); ctx.lineTo(-20, 25); ctx.lineTo(-10, 0); ctx.lineTo(-20, -25);
     }
+    
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
@@ -1192,8 +1313,9 @@ export class GameEngine {
       const ctx = this.ctx;
       ctx.strokeStyle = 'rgba(6, 182, 212, 0.8)';
       ctx.lineWidth = 1;
-      const mx = this.mouse.x + this.camera.x - this.width/2;
-      const my = this.mouse.y + this.camera.y - this.height/2;
+      // Convert screen mouse coords to world coords for drawing
+      const mx = (this.mouse.x - this.width/2) / this.zoom + this.camera.x;
+      const my = (this.mouse.y - this.height/2) / this.zoom + this.camera.y;
       
       ctx.beginPath();
       ctx.arc(mx, my, 10, 0, Math.PI * 2);

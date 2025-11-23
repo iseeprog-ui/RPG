@@ -137,7 +137,7 @@ export interface Particle extends Entity {
   maxLife: number;
   color: string;
   size: number;
-  type: 'thrust' | 'explosion' | 'spark' | 'smoke' | 'boost' | 'shockwave' | 'warp';
+  type: 'thrust' | 'explosion' | 'spark' | 'smoke' | 'boost' | 'shockwave' | 'warp' | 'mining' | 'shield_hit';
 }
 
 export interface Bullet extends Entity {
