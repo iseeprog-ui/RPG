@@ -258,6 +258,7 @@
       <div class="row"><small>Кредиты</small><div class="stat good" id="crStat"></div></div>
       <div class="row"><small>Груз / Лимит</small><div class="stat" id="cargoStat"></div></div>
       <div class="row"><small>Уровень</small><div class="stat" id="lvlStat"></div></div>
+      <div class="row"><small>Износ</small><div class="stat" id="wearStat"></div></div>
     </div>
 
     <div class="card">
@@ -526,7 +527,11 @@ const state = {
   storyStage:0,
   storyFlags:{},
   warNews:[],
-  shake:0
+  shake:0,
+  ecoTimer:22,
+  trendTimer:randi(110,70),
+  activeTrends:[],
+  roamingFleets:[]
 };
 
 const player = {
@@ -548,6 +553,10 @@ const player = {
   aimAssist: 0.12,        // сглаживание цели мыши
   cam:{x:0,y:0, smooth:6},// плавная камера
   thrusterFx: 0,
+  wear:0,
+  wearWarned:false,
+  engineJam:0,
+  jamWarn:false,
   modules:[],
   shipSlots:[],
   crewSlots:2,
@@ -561,7 +570,17 @@ const GOODS = [
   {id:"tech", name:"Техника", base:42},
   {id:"med", name:"Медпакеты", base:35},
   {id:"art", name:"Артефакты", base:80},
+  {id:"drugs", name:"Наркотики (нелег.)", base:120, illegal:true},
+  {id:"bios", name:"Биосистемы (нелег.)", base:150, illegal:true},
+  {id:"ai_core", name:"Военный ИИ (нелег.)", base:210, illegal:true},
+  {id:"relic", name:"Запрещённые артефакты", base:260, illegal:true},
   {id:"heart", name:"Сердце Туманности (уник.)", base:0, unique:true},
+];
+
+const GLOBAL_TRENDS = [
+  {id:"med_crisis", name:"Эпидемия в Федерации", duration:140, modifiers:{med:1.35, food:1.12}, news:"Спрос на медицину растёт."},
+  {id:"ore_glut", name:"Переизбыток руды", duration:120, modifiers:{ore:0.65, tech:0.9}, news:"Цены на руду обвалились."},
+  {id:"tariffs", name:"Корпоративные тарифы", duration:160, modifiers:{tech:1.25, art:0.9, ai_core:1.35}, news:"Контрабандисты наживаются на тарифах."},
 ];
 
 const UPGRADES = [
@@ -571,6 +590,7 @@ const UPGRADES = [
   {id:"cargo", name:"Трюм +3", cost:180, apply:()=>{player.cargoLimit+=3;}},
   {id:"fuel", name:"Бак +40", cost:120, apply:()=>{player.fuelMax+=40; player.fuel=player.fuelMax;}},
   {id:"crew", name:"Каюты экипажа +1", cost:200, apply:()=>{player.crewSlots+=1;}},
+  {id:"maint", name:"Техосмотр корабля", cost:150, apply:()=>{player.wear=0; addLog("Износ сброшен.","good");}},
   {id:"slotUp", name:"Случайный слот +1 ур.", cost:260, apply:()=>{
     const s=pick(player.shipSlots); s.level++; applySlotBonus(s);
   }},
@@ -581,6 +601,19 @@ function applySlotBonus(s){
   if(s.id==="shield") player.shieldMax += 4;
   if(s.id==="engine") player.engine.thrust += 18;
   if(s.id==="cargo_mod") player.cargoLimit += 2;
+}
+
+function slotXpNeed(s){ return 24 + s.level*14; }
+function gainSlotXp(slotId, amount){
+  const slot=player.shipSlots.find(x=>x.id===slotId);
+  if(!slot) return;
+  slot.xp=(slot.xp||0)+amount;
+  const need=slotXpNeed(slot);
+  if(slot.xp>=need){
+    slot.xp=0; slot.level++; applySlotBonus(slot);
+    addLog(`${slot.name} развивается до ур.${slot.level}.`,"good");
+    renderHangar();
+  }
 }
 
 /* ---- Crew Perks ---- */
@@ -712,6 +745,8 @@ function ensureSomeModules(){
 function genSector(i){
   const danger = clamp(0.6 + i*0.28 + rand(0.22,-0.22),0.5,2.2);
   const fac = pick(FACTIONS).id;
+  const stationTypes=["trade","science","shipyard","smuggler","auction","residence"];
+  const stationType=pick(stationTypes);
   const priceMul = GOODS.reduce((acc,g)=>{
     if(g.unique){ acc[g.id]=0; return acc; }
     acc[g.id] = clamp( rand(1.35,0.75) * (1 + danger*0.22), 0.55, 1.9 );
@@ -721,9 +756,15 @@ function genSector(i){
     id:i,
     name:String.fromCharCode(65+i)+"-"+(i+1),
     danger,
+    baseDanger: danger,
+    pirateDen: Math.random()<0.35?1:0,
+    lastVisit:0,
+    caravanTimer:randi(70,35),
+    blackMarket:false,
     economy: priceMul,
     station:{
       name: factionName(fac).split(" ")[0]+"-Hub",
+      type: stationType,
       x: rand(700,-700), y: rand(500,-500),
       radius: 70
     },
@@ -755,6 +796,7 @@ const fuelStat=document.getElementById("fuelStat");
 const crStat=document.getElementById("crStat");
 const cargoStat=document.getElementById("cargoStat");
 const lvlStat=document.getElementById("lvlStat");
+const wearStat=document.getElementById("wearStat");
 const sectorPill=document.getElementById("sectorPill");
 const ownerPill=document.getElementById("ownerPill");
 const shipClassStat=document.getElementById("shipClassStat");
@@ -932,6 +974,19 @@ function repTier(fid){
   if(r>-60) return "Подозрение";
   return "Враг";
 }
+function stationTypeName(t){
+  return {
+    trade:"Торговый узел",
+    science:"Научная станция",
+    shipyard:"Верфь",
+    smuggler:"Гавань контрабандистов",
+    auction:"Аукционный дом",
+    residence:"Резиденция фракции"
+  }[t]||"Станция";
+}
+function canAccessBlackMarket(sec){
+  return sec.station.type==="smuggler" || sec.blackMarket===true || sec.pirateDen>=2;
+}
 function isFrontline(secId){
   const own=ownerOf(secId);
   for(const nb of state.links[secId]){
@@ -943,11 +998,16 @@ function priceFor(g){
   if(g.unique) return 0;
   const sec=currentSector();
   let p=g.base*sec.economy[g.id];
+  state.activeTrends.forEach(t=>{ if(t.modifiers?.[g.id]) p*=t.modifiers[g.id]; });
   const owner=ownerOf(sec.id);
   const r=repValue(owner);
   const repMul = r>=60?0.85 : r>=25?0.93 : r>-25?1.0 : r>-60?1.12 : 1.28;
   p*=repMul;
   if(isFrontline(sec.id)) p*=1.08 + sec.danger*0.03;
+  p*=1+sec.pirateDen*0.04;
+  if(g.illegal){
+    p*= canAccessBlackMarket(sec)?0.95:1.25;
+  }
   if(player.crew.some(c=>c.perkId==="negotiator") && r>=25) p*=0.92;
   return Math.round(p);
 }
@@ -966,7 +1026,7 @@ function openMarket(){
   ensureSomeModules();
   setMode("market");
   const sec=currentSector();
-  stationName.textContent = sec.station.name;
+  stationName.textContent = `${sec.station.name} · ${stationTypeName(sec.station.type)}`;
   addLog(`Станция ${sec.station.name}. Владелец: ${factionName(ownerOf(sec.id))}.`,"good");
   if(state.missionBoard.length===0) genMissionBoard();
   renderMarket();
@@ -993,6 +1053,21 @@ function renderRepPanel(){
 function renderMarket(){
   renderRepPanel();
   goodsDiv.innerHTML="";
+  const sec=currentSector();
+  if(state.activeTrends.length){
+    const txt=state.activeTrends.map(t=>`${t.name} (${Math.ceil(t.timeLeft/60)}м)` ).join(" · ");
+    const info=document.createElement("div");
+    info.className="meta";
+    info.textContent=`Глобальные тренды: ${txt}`;
+    goodsDiv.appendChild(info);
+  }
+  if(canAccessBlackMarket(sec)){
+    const info=document.createElement("div");
+    info.className="meta warn";
+    info.textContent="Доступен чёрный рынок: нелегал дешевле, но риск проверки.";
+    goodsDiv.appendChild(info);
+  }
+
   GOODS.filter(g=>!g.unique).forEach(g=>{
     const p=priceFor(g);
     const owned=findCargo(g.id)?.qty||0;
@@ -1002,10 +1077,10 @@ function renderMarket(){
     row.innerHTML=`
       <div>
         <div>${g.name}</div>
-        <small>Цена: <b>${p}</b> cr · В трюме: ${owned}</small>
+        <small>${g.illegal?"Нелегальный товар · ":""}Цена: <b>${p}</b> cr · В трюме: ${owned}</small>
       </div>
       <div style="display:flex; gap:6px">
-        <button ${player.credits<p || cargoCount()>=player.cargoLimit?"disabled":""} data-buy="${g.id}">Купить</button>
+        <button ${player.credits<p || cargoCount()>=player.cargoLimit || (g.illegal&&!canAccessBlackMarket(sec))?"disabled":""} data-buy="${g.id}">Купить</button>
         <button ${owned<=0?"disabled":""} data-sell="${g.id}">Продать</button>
       </div>`;
     goodsDiv.appendChild(row);
@@ -1034,6 +1109,16 @@ function renderMarket(){
         player.credits-=p;
         addCargo(id,1);
         addLog(`Куплено: ${g.name} за ${p} cr.`);
+        if(g.illegal){
+          const scan=Math.random()<0.35;
+          if(scan){
+            const fine=Math.round(p*0.6);
+            player.credits=Math.max(0, player.credits-fine);
+            state.rep[ownerOf(currentSector().id)]=clamp(repValue(ownerOf(currentSector().id))-6,-100,100);
+            addLog(`Патруль задержал контрабанду. Штраф ${fine} cr и потеря репутации.`,`bad`);
+            if(Math.random()<0.4) spawnRevengeWave(ownerOf(currentSector().id));
+          }
+        }
         renderMarket();
       }
     };
@@ -1077,6 +1162,7 @@ function applyShipClass(cls){
   player.cargoLimit=cls.cargo;
   player.crewSlots=cls.crewSlots;
   player.shipSlots=cls.slots.map(s=>({...s}));
+  player.wear=0; player.wearWarned=false;
   addLog(`Корабль переоснащён: ${cls.name}.`,"good");
 }
 function renderShipShop(){
@@ -1138,10 +1224,12 @@ function renderHangar(){
     const el=document.createElement("div");
     el.className="slot "+(s.level>0?"filled":"");
     el.dataset.slot=s.id;
+    const xpText = s.xp!==undefined ? `<div class="meta">Прогресс: ${Math.floor((s.xp/slotXpNeed(s))*100)}%</div>` : "";
     el.innerHTML=`
       <div class="type">${s.id}</div>
       <div>${s.name}</div>
       <div class="lvl">Lv ${s.level}</div>
+      ${xpText}
     `;
     shipSlotsDiv.appendChild(el);
   });
@@ -1575,6 +1663,69 @@ const EVENT_POOL = [
   }),
 ];
 
+function tickGlobalTrends(dt){
+  state.trendTimer-=dt;
+  state.activeTrends.forEach(t=>t.timeLeft-=dt);
+  state.activeTrends=state.activeTrends.filter(t=>t.timeLeft>0);
+  if(state.trendTimer>0) return;
+  const t={...pick(GLOBAL_TRENDS)};
+  t.timeLeft=t.duration;
+  state.activeTrends.push(t);
+  state.trendTimer=randi(120,80);
+  state.warNews.unshift(`Глобальный тренд: ${t.news}`);
+  addLog(`Глобальный тренд: ${t.name}.`,`warn`);
+}
+
+function tickEcosystem(dt){
+  state.ecoTimer-=dt;
+  if(state.ecoTimer>0) return;
+  state.ecoTimer=22;
+  state.sectors.forEach(sec=>{
+    const idle=state.time-(sec.lastVisit||0);
+    if(idle>45 && sec.pirateDen<4){
+      sec.pirateDen+=0.5;
+      if(sec.pirateDen>=2) sec.blackMarket=true;
+      if(sec.id===state.sectorIndex || Math.random()<0.2){
+        addLog(`Пиратское логово в секторе ${sec.name} укрепилось.`,"warn");
+      }
+    }
+    sec.danger=clamp(sec.baseDanger + sec.pirateDen*0.12,0.5,2.6);
+    sec.caravanTimer-=8;
+    if(sec.caravanTimer<=0){
+      sec.caravanTimer=randi(90,50);
+      sec.economy.food=clamp(sec.economy.food*0.92,0.5,2.1);
+      sec.economy.tech=clamp(sec.economy.tech*0.95,0.5,2.1);
+      if(sec.id===state.sectorIndex) addLog("Через сектор прошёл торговый караван: провиант подешевел.","good");
+    }
+    if(sec.pirateDen>=3 && !sec.pirateWarned){
+      sec.pirateWarned=true;
+      addLog(`Пираты захватили части станции ${sec.name}, цены растут.`,"bad");
+      sec.economy.tech=clamp(sec.economy.tech*1.15,0.5,2.5);
+    }
+  });
+}
+
+function tickRoamingFleets(dt){
+  state.roamingFleets.forEach(f=>f.progress+=dt);
+  state.roamingFleets=state.roamingFleets.filter(f=>{
+    if(f.progress>=f.travelTime){
+      if(f.to===state.sectorIndex){
+        addLog(`Кочующий флот ${factionName(f.faction)} входит в сектор!`,"bad");
+        spawnRaidWave(f.faction);
+      }
+      return false;
+    }
+    return true;
+  });
+  if(state.roamingFleets.length<2 && Math.random()<0.02){
+    const from=randi(state.sectors.length-1,0);
+    let to=randi(state.sectors.length-1,0);
+    if(to===from) to=(to+1)%state.sectors.length;
+    state.roamingFleets.push({from,to,progress:0,travelTime:rand(55,35), faction:pick(FACTIONS).id});
+    state.warNews.unshift(`Замечен кочующий флот ${state.sectors[from].name}→${state.sectors[to].name}.`);
+  }
+}
+
 /* ---- War system ---- */
 function edgeKey(a,b){ return a<b ? `${a}-${b}` : `${b}-${a}`; }
 function bumpWarTension(att, def, amount){
@@ -1738,6 +1889,8 @@ canvas.addEventListener("click", e=>{
 /* ---- Entities / sector init ---- */
 function initSector(){
   const sec=currentSector();
+  sec.lastVisit=state.time;
+  sec.pirateDen=Math.max(0, sec.pirateDen-0.15);
   state.station=sec.station;
   player.x=0; player.y=0; player.vx=0; player.vy=0;
   state.enemies=[]; state.bullets=[]; state.loot=[]; state.particles=[];
@@ -1749,7 +1902,7 @@ function initSector(){
 }
 function spawnWave(){
   const sec=currentSector();
-  const n=4+Math.floor(sec.danger*3);
+  const n=4+Math.floor(sec.danger*3)+Math.floor(sec.pirateDen);
   for(let i=0;i<n;i++){
     state.enemies.push({
       x:rand(900,-900), y:rand(700,-700),
@@ -1759,6 +1912,7 @@ function spawnWave(){
       maxHp: 22 + sec.danger*18,
       fireCd: rand(1.2,0.4),
       type: Math.random()<0.25 ? "raider":"pirate",
+      behavior: pick(["aggressive","ambush","disrupt","thief"]),
       faction:PIRATES,
       bounty: 18 + Math.round(sec.danger*10)
     });
@@ -1852,11 +2006,12 @@ function shoot(){
 }
 function enemyShoot(e){
   const dir=angleTo(e,player);
+  const extraDmg = e.behavior==="aggressive" ? 2 : 0;
   state.bullets.push({
     x:e.x+Math.cos(dir)*18, y:e.y+Math.sin(dir)*18,
     vx:Math.cos(dir)*420+e.vx,
     vy:Math.sin(dir)*420+e.vy,
-    life:1.7, dmg:7+currentSector().danger*2.2, from:"enemy", r:3
+    life:1.7, dmg:7+currentSector().danger*2.2+extraDmg, from:"enemy", r:3, behavior:e.behavior
   });
 }
 function explode(x,y,n=14){
@@ -2211,6 +2366,9 @@ function update(dt){
 
   state.warTick-=dt;
   if(state.warTick<=0) warTick();
+  tickGlobalTrends(dt);
+  tickEcosystem(dt);
+  tickRoamingFleets(dt);
 
   if(state.mode==="space"){
     // --- Улучшенное управление ---
@@ -2229,6 +2387,9 @@ function update(dt){
     const boosting = state.keys["shift"];
     const boostMul = boosting && thrusting && player.fuel>0 ? player.engine.boost : 1;
     if(boostMul>1) player.fuel=Math.max(0,player.fuel-dt*7);
+    player.engineJam=Math.max(0, player.engineJam-dt);
+    if(player.engineJam>0 && !player.jamWarn){ addLog("Двигатели глушатся помехами!", "warn"); player.jamWarn=true; }
+    if(player.engineJam===0) player.jamWarn=false;
 
     // направление мыши (цель поворота)
     const cam=camera();
@@ -2243,7 +2404,9 @@ function update(dt){
     const fLen=Math.hypot(fwd,str);
     if(fLen>0){ fwd/=fLen; str/=fLen; }
 
-    const thrust=player.engine.thrust*boostMul;
+    const wearPenalty = 1 - Math.min(0.35, player.wear/220);
+    const jamPenalty = player.engineJam>0 ? 0.65 : 1;
+    const thrust=player.engine.thrust*boostMul*wearPenalty*jamPenalty;
     const ax = (Math.cos(player.angle)*fwd + Math.cos(player.angle+Math.PI/2)*str*player.strafeMul)*thrust;
     const ay = (Math.sin(player.angle)*fwd + Math.sin(player.angle+Math.PI/2)*str*player.strafeMul)*thrust;
 
@@ -2251,8 +2414,8 @@ function update(dt){
 
     // ограничение скорости
     const sp=Math.hypot(player.vx,player.vy);
-    if(sp>player.maxSpeed*boostMul){
-      const k=(player.maxSpeed*boostMul)/sp;
+    if(sp>player.maxSpeed*boostMul*wearPenalty*jamPenalty){
+      const k=(player.maxSpeed*boostMul*wearPenalty*jamPenalty)/sp;
       player.vx*=k; player.vy*=k;
     }
 
@@ -2270,6 +2433,11 @@ function update(dt){
     // для графики форсажа
     player.thrusterFx = thrusting ? (boosting?1:0.6) : 0;
     if(boosting && thrusting) state.shake=Math.min(0.6,state.shake+dt*0.9);
+
+    // износ корпуса
+    player.wear = clamp(player.wear + dt*0.06 + (boosting?dt*0.45:0), 0, 120);
+    if(player.wear>70 && !player.wearWarned){ addLog("Корабль изношен: нужен техосмотр.","warn"); player.wearWarned=true; }
+    if(player.wear<40) player.wearWarned=false;
 
     // частицы двигателей
     if(thrusting && player.fuel>0){
@@ -2301,10 +2469,12 @@ function update(dt){
     const sec=currentSector();
     for(const e of state.enemies){
       const d=dist(e,player);
-      if(d<520){
+      const chaseRange = e.behavior==="ambush"?380:520;
+      if(d<chaseRange){
         const dir=angleTo(e,player);
-        e.vx += Math.cos(dir)*sec.danger*70*dt;
-        e.vy += Math.sin(dir)*sec.danger*70*dt;
+        const behaviorMul = e.behavior==="aggressive"?1.2:1;
+        e.vx += Math.cos(dir)*sec.danger*70*behaviorMul*dt;
+        e.vy += Math.sin(dir)*sec.danger*70*behaviorMul*dt;
       }else{
         e.vx += Math.sin(state.time*0.9+e.x*0.01)*15*dt;
         e.vy += Math.cos(state.time*0.8+e.y*0.01)*15*dt;
@@ -2313,9 +2483,16 @@ function update(dt){
       e.x+=e.vx*dt; e.y+=e.vy*dt;
 
       e.fireCd-=dt;
-      if(d<460 && e.fireCd<=0){
-        e.fireCd=rand(1.6,0.6)/(1+sec.danger*0.3);
+      const fireRange = e.behavior==="ambush"?360:(e.behavior==="disrupt"?500:460);
+      const fireMul = e.behavior==="aggressive"?0.8:1;
+      if(d<fireRange && e.fireCd<=0){
+        e.fireCd=rand(1.6,0.6)/(1+sec.danger*0.3)*fireMul;
         enemyShoot(e);
+      }
+      if(e.behavior==="thief" && d<140 && !e.stole){
+        const stolen=Math.min(player.credits, 30+Math.round(sec.danger*10));
+        player.credits-=stolen; e.stole=true;
+        addLog(`Пират украл ${stolen} cr и пытается уйти!`,"bad");
       }
     }
 
@@ -2332,6 +2509,9 @@ function update(dt){
               dropLoot(e);
               player.credits+=e.bounty;
               addXP(16+sec.danger*8);
+              gainSlotXp("gun",4);
+              gainSlotXp("gun2",3);
+              gainSlotXp("shield",2);
 
               for(const q of state.activeQuests){
                 if(q.status!=="active") continue;
@@ -2359,7 +2539,13 @@ function update(dt){
             const s=Math.min(player.shield,dmg);
             player.shield-=s; dmg-=s;
           }
-          if(dmg>0) player.hp-=dmg;
+          if(dmg>0){ player.hp-=dmg; player.wear=Math.min(120, player.wear + dmg*0.6); }
+          if(b.behavior==="disrupt") player.engineJam=Math.max(player.engineJam,2.5);
+          if(b.behavior==="thief" && player.credits>0){
+            const stolen=Math.min(player.credits, 20+Math.round(currentSector().danger*8));
+            player.credits-=stolen;
+            addLog(`Вор-боты утащили ${stolen} cr.`,"bad");
+          }
           if(player.hp<=0){
             player.hp=player.hpMax;
             player.shield=player.shieldMax*0.5;
@@ -2412,6 +2598,7 @@ hpStat.textContent = `${Math.round(player.hp)} / ${Math.round(player.hpMax)}`;
   crStat.textContent = `${Math.round(player.credits)}`;
   cargoStat.textContent = `${cargoCount()} / ${player.cargoLimit}`;
   lvlStat.textContent = `${player.level} (${Math.floor(player.xp)}/${player.xpNext} XP)`;
+  wearStat.textContent = `${Math.round(player.wear)}%`;
   sectorPill.textContent = `Сектор ${currentSector().name}`;
   ownerPill.textContent = `Владелец: ${factionName(ownerOf(currentSector().id))}`;
   shipClassStat.textContent = SHIP_CLASSES.find(s=>s.id===player.shipClassId).name;
